@@ -101,7 +101,7 @@ test("live credential reads reject changed permissions and target defaults until
 test("the template lists every configurable argument without setting any target or payload", async () => {
   const settings = parseEnv(await readFile(new URL("../.env.example", import.meta.url), "utf8"));
   const variables = new Set(operations.flatMap(op =>
-    Object.keys(op.inputSchema.properties).map(field => argumentEnvName(op, field))));
+    Object.keys(op.inputSchema.properties).map(field => argumentEnvName(op, field))).filter(Boolean));
   for (const variable of variables) assert.equal(settings[variable], "", variable);
   assert.equal(settings.INBOXEU_DOMAINS, "");
   assert.deepEqual(Object.keys(settings).sort(), ["INBOXEU_API_KEY", "INBOXEU_MODE", "INBOXEU_DOMAINS", ...variables].sort());
@@ -177,12 +177,13 @@ test("malformed domain settings report the variable without exposing its content
     '["bad/name"]', '["Bücher.example.", "xn--bcher-kva.example"]',
     '{"ONE.example":[],"one.example.":[]}', '{"one.example":"001"}', '{"one.example":null}',
     '{"one.example":[1]}', '{"one.example":["abc/123"]}', '{"one.example":[""]}',
-    '{"one.example":["001","001"]}',
+    '{"one.example":["001","001"]}', '{"one.example":{"ops":"x","support":"x"}}',
+    '{"one.example":{"a@b":"1"}}', '{"one.example":{"ops":"ops@one.example"}}',
   ];
   for (const value of invalid) {
     await writeFile(file, `INBOXEU_DOMAINS='${value}'\n`);
     assert.throws(() => loadConfig(argv), {
-      message: "Invalid INBOXEU_DOMAINS. Expected unique domain names in a JSON array or an object mapping domains to arrays of unique mailbox ID strings.",
+      message: "Invalid INBOXEU_DOMAINS. Use a domain list, or map each domain to unique mailbox IDs or mailbox names and IDs.",
     });
   }
   await writeFile(file, "INBOXEU_DOMAIN_NAME=private/invalid\n");

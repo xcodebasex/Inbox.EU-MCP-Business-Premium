@@ -85,6 +85,32 @@ test('returns the documented availability statuses only for their respective GET
   await assert.rejects(html({ path: domain }), { message: 'Could not read the response from Inbox.eu.' });
 });
 
+test('recognizes the observed administrator email availability response without treating other not-found errors as availability', async () => {
+  const data = { error: 'RestValidationException', errorMessages: ['Email not found and is available for registration.'] };
+  const query = { email: 'free@example.org' };
+  const request = client(async () => Response.json(data, { status: 404 }));
+  assert.deepEqual(await request({ path: email, query }), { status: 404, data });
+  for (const response of [
+    Response.json({ ...data, error: 'NotFoundException' }, { status: 404 }),
+    Response.json({ ...data, errorMessages: [...data.errorMessages, 'Other validation error'] }, { status: 404 }),
+    Response.json({ ...data, data: [] }, { status: 404 }),
+    Response.json({ error: 'RestValidationException' }, { status: 404 }),
+    new Response('<html>Not found</html>', { status: 404, headers: { 'content-type': 'text/html' } }),
+  ]) {
+    await assert.rejects(client(async () => response)({ path: email, query }),
+      { message: 'Could not verify the administrator email address. Check the spelling.' });
+  }
+  await assert.rejects(request({ path: me }), { message: 'The requested item could not be found or accessed.' });
+});
+
+test('suggests a domain lookup only when global administrator lookup rejects authorization', async () => {
+  const request = client(async () => new Response(null, { status: 401 }));
+  await assert.rejects(request({ path: '/api/v1/domain_admins/7' }),
+    { message: 'Administrator lookup was denied. Try the domain administrator lookup.' });
+  await assert.rejects(request({ path: '/api/v1/domains/example.com/domain_admins/7' }),
+    { message: 'Inbox.eu did not accept the API key for this operation.' });
+});
+
 test('redacts the configured key in both string values and property names', async () => {
   const request = client(async () => Response.json({ data: [{ id: 1, name: 'demo',
     echoed: `Bearer ${apiKey} and ${apiKey}`, [`field-${apiKey}`]: 'hidden' }] }));

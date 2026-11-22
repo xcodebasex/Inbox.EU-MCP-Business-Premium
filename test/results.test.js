@@ -15,6 +15,19 @@ test("mailbox output accepts individual and tabular records and discards unknown
   assert.throws(() => project("inboxeu_get_mailbox", { recoveryCodes: ["private"] }));
 });
 
+test("address lookups confirm the returned mailbox and expose only public metadata", () => {
+  const target = { domainName: "example.org", userId: "123", mailboxEmail: "info@example.org" };
+  const row = { id: 123, user: "info", is_premium: true, pop3_password: "private", prefs: { password: "private" } };
+  const lookup = data => projectResult("inboxeu_get_mailbox", { status: 200, data: { data } }, target);
+  const verified = { id: 123, user: "info", email: "info@example.org", is_premium: true };
+  assert.deepEqual(lookup(row), { data: verified });
+  assert.deepEqual(lookup([row]), { data: [verified] });
+  for (const bad of [[], [row, row], { id: 123 }, { ...row, id: 234 }, { ...row, user: "other" },
+    { ...row, email: "other@example.org" }, { ...row, domainName: "other.example" }]) {
+    assert.throws(() => lookup(bad), /did not confirm the requested mailbox/);
+  }
+});
+
 test("only public profile preferences are returned and malformed 2FA state is never reported as disabled", () => {
   const profile = { id: 1, domainSuperpass: { admin: "secret" }, prefs: { itemsPerPage: 20, session: "secret" } };
   assert.deepEqual(project("inboxeu_get_profile", profile), { data: { id: 1, prefs: { itemsPerPage: 20 } } });

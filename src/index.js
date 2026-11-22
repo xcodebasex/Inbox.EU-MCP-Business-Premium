@@ -1,6 +1,7 @@
 import { McpServer, fromJsonSchema } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { createClient, InboxEuError } from "./client.js";
+import { readAdmin } from "./admin.js";
 import { ConfigError, loadConfig } from "./config.js";
 import { InputError, operations } from "./operations.js";
 import { projectResult } from "./results.js";
@@ -45,13 +46,13 @@ function toolInputSchema(schema, defaults, optional) {
   };
 }
 
-function createServer({ mode, readApiKey, toolDefaults, domains }, clarification) {
+function createServer({ mode, readApiKey, toolDefaults, domains, mailboxAddresses }, clarification) {
   const server = new McpServer({ name: "inboxeu-mcp", version: "1.0.0" }, clarification.serverOptions);
   for (const operation of operations) {
     const readOnly = operation.method === "GET";
     if (!readOnly && mode !== "full") continue;
     const defaults = toolDefaults[operation.name] ?? {};
-    const { optional, resolve } = toolArguments(operation.inputSchema, defaults, domains);
+    const { optional, resolve } = toolArguments(operation.inputSchema, defaults, domains, mailboxAddresses);
     const fullSchema = fromJsonSchema(operation.inputSchema)["~standard"];
     server.registerTool(operation.name, {
       description: operation.description,
@@ -69,7 +70,7 @@ function createServer({ mode, readApiKey, toolDefaults, domains }, clarification
       try {
         apiKey = readApiKey();
         const answers = clarification.priorAnswers(ctx, operation.name, args);
-        const { values, missing } = resolve({ ...answers, ...args });
+        const { values, missing } = resolve(args, answers);
         if (missing) {
           return await clarification.askTarget({ server, ctx, operationName: operation.name, args, answers, missing });
         }
@@ -82,9 +83,15 @@ function createServer({ mode, readApiKey, toolDefaults, domains }, clarification
       }
       try {
         const request = createClient({ apiKey });
-        const response = await request({ ...params, method: operation.method, signal: ctx.mcpReq.signal });
+        const signal = ctx.mcpReq.signal;
+        const response = operation.name === "inboxeu_get_admin"
+          ? await readAdmin(request, {
+            domainAdmin: resolvedArgs.domainAdmin, domainName: toolDefaults.inboxeu_get_domain_admin?.domainName,
+          }, signal)
+          : await request({ ...params, method: operation.method, signal });
         const requestedCount = operation.name === "inboxeu_create_mailboxes" ? params.body.length : undefined;
-        const result = projectResult(operation.name, response, { requestedCount, userId: resolvedArgs.userId });
+        const { domainName, userId, mailboxEmail } = resolvedArgs;
+        const result = projectResult(operation.name, response, { domainName, userId, mailboxEmail, requestedCount });
         return {
           structuredContent: result,
           content: [{ type: "text", text: resultText(result) }],

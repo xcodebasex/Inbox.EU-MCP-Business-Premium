@@ -55,6 +55,7 @@ test("every described OpenAPI operation has one tool with the corresponding HTTP
       compareForm(schema, body);
     } else {
       const keys = params.map(p => p.name);
+      if (op.name === "inboxeu_get_mailbox") keys.push("mailboxEmail");
       const required = params.filter(p => p.required).map(p => p.name);
       if (body) {
         keys.push("body");
@@ -84,7 +85,7 @@ test("wire requests retain documented paths, encoded IDs, queries and JSON bodie
     ["inboxeu_get_admin", { domainAdmin: admin }, { path: "/api/v1/domain_admins/Admin%2B1%40example.org" }],
     ["inboxeu_get_domain_admin", { domainName: "BÜCHER.example", domainAdmin: admin },
       { path: "/api/v1/domains/xn--bcher-kva.example/domain_admins/Admin%2B1%40example.org" }],
-    ["inboxeu_get_mailbox", { domainName: "EXAMPLE.org", userId: "12?name#x" },
+    ["inboxeu_get_mailbox", { domainName: "EXAMPLE.org", userId: "12?name#x", mailboxEmail: "sales@example.org" },
       { path: "/api/v1/domains/example.org/mail_users/12%3Fname%23x" }],
     ["inboxeu_list_invoices", { domainName: "example.org", ...query },
       { path: "/api/v1/domains/example.org/transactions/", query }],

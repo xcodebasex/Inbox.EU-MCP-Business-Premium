@@ -1,4 +1,5 @@
 import { InboxEuError } from "./client.js";
+import { dnsName, emailAddress } from "./operations.js";
 
 const adminFields = [
   "id", "username", "email", "firstName", "lastName", "registered",
@@ -14,6 +15,7 @@ const invoiceFields = [
 const mailboxFields = [
   "id", "userId", "user", "username", "email", "domainName", "firstName",
   "lastName", "forename", "surname", "status", "quota", "registered", "language",
+  "domain_id", "is_premium", "date_created", "date_updated",
 ];
 const mailboxIdentityFields = ["id", "userId", "user", "username", "email", "domainName"];
 const premiumMailboxLimit = /^Could not create user\. Reason: You can make maximum (0|[1-9]\d{0,15}) premium users(?:\r?\n)?$/u;
@@ -47,6 +49,31 @@ function publicRecord(record, fields) {
   const result = scalarFields(record, fields);
   if (!Object.keys(result).length) throw unexpectedShape();
   return result;
+}
+
+function matchesMailbox(record, { domainName, userId, mailboxEmail }) {
+  const ids = [record.id, record.userId].filter(value => value != null);
+  const names = [record.email, record.user, record.username].filter(value => value != null && value !== "");
+  if (!ids.length || !names.length || !ids.every(id => String(id) === userId)) return false;
+  try {
+    const domain = dnsName(domainName);
+    if (record.domainName != null && dnsName(record.domainName) !== domain) return false;
+    return names.every(name => typeof name === "string" &&
+      emailAddress(name.includes("@") ? name : `${name}@${domain}`) === mailboxEmail);
+  } catch {
+    return false;
+  }
+}
+
+function mailboxResult(data, target) {
+  const rows = (Array.isArray(data) ? data : [data]).map(item => publicRecord(item, mailboxFields));
+  if (target.mailboxEmail) {
+    if (rows.length !== 1 || !matchesMailbox(rows[0], target)) {
+      throw new InboxEuError("Inbox.eu did not confirm the requested mailbox. Check the address and internal ID.");
+    }
+    rows[0].email = target.mailboxEmail;
+  }
+  return { data: Array.isArray(data) ? rows : rows[0] };
 }
 
 function writeResult(matchesContract) {
@@ -163,7 +190,8 @@ function mailboxBatch(data, requested) {
   return { data: results, summary };
 }
 
-export function projectResult(name, { status, data: envelope }, { requestedCount, userId } = {}) {
+export function projectResult(name, { status, data: envelope, source }, target = {}) {
+  const { requestedCount, userId } = target;
   const data = envelope.data;
   switch (name) {
     case "inboxeu_check_auth":
@@ -174,7 +202,7 @@ export function projectResult(name, { status, data: envelope }, { requestedCount
     case "inboxeu_check_domain":
       return { available: status === 404 };
     case "inboxeu_check_admin_email":
-      return { available: status === 422 };
+      return { available: status === 422 || status === 404 };
     case "inboxeu_get_2fa_status":
       if (typeof data?.isEnabled !== "boolean") throw unexpectedShape();
       return { data: { isEnabled: data.isEnabled } };
@@ -183,15 +211,13 @@ export function projectResult(name, { status, data: envelope }, { requestedCount
     case "inboxeu_get_domain_admin": {
       const admin = publicRecord(data, adminFields);
       if (isRecord(data.prefs)) admin.prefs = scalarFields(data.prefs, preferenceFields);
-      return { data: admin };
+      return source ? { data: admin, source } : { data: admin };
     }
     case "inboxeu_list_invoices":
       if (!Array.isArray(data)) throw unexpectedShape();
       return { data: data.map(item => publicRecord(item, invoiceFields)) };
     case "inboxeu_get_mailbox":
-      return { data: Array.isArray(data)
-        ? data.map(item => publicRecord(item, mailboxFields))
-        : publicRecord(data, mailboxFields) };
+      return mailboxResult(data, target);
     case "inboxeu_update_profile":
       return writeResult(isRecord(data));
     case "inboxeu_delete_profile":

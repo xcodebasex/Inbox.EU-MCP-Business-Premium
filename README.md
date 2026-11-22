@@ -48,6 +48,8 @@ The contract tests use version 1.0.0 of the Inbox.eu API specification, saved on
    INBOXEU_MODE=read-only
    ```
 
+   To look up accounts by email address, add your mailboxes to the same file. [Look up a mailbox by email address](#look-up-a-mailbox-by-email-address)
+
 4. Start the server from the project directory.
 
    ```sh
@@ -128,9 +130,31 @@ node src/index.js --env-file "/absolute/path/to/private/.env" --mode read-only
 
 `--mode` takes precedence over `INBOXEU_MODE`. The server stops at startup if the mode is unknown or an explicitly selected file cannot be read. If you previously used `INBOXEU_ENABLE_WRITES=true`, select `full` explicitly to enable writes.
 
+## Look up a mailbox by email address
+
+Inbox.eu's Business API retrieves a mailbox by its domain and internal ID. Save the address-to-ID mapping once in `.env` to use the full email address in subsequent lookups. One administrator API key covers the domains and mailboxes that key can access.
+
+1. **Find the mailbox ID.** In the Inbox.eu Business control panel, select the domain, open **Mailboxes**, and find the row for the exact address. Its edit link contains the ID. For example, if the edit link for `info@example.org` ends in `/users/00123/edit`, its ID is `00123`.
+
+2. **Edit the existing `INBOXEU_DOMAINS=` line** in the local `.env` beside `package.json`, or in the file selected with `--env-file`. Keep all domains on that one line. Under each domain, use the part before `@` as the mailbox name and put each ID in double quotes to preserve leading zeros. Replace these example domains, names, and IDs with your own.
+
+   ```dotenv
+   INBOXEU_DOMAINS='{"example.org":{"info":"00123","sales":"00456"},"example.net":{"office":"00789"}}'
+   ```
+
+   For a single domain, keep just its entry. You can leave `INBOXEU_DOMAIN_NAME` and `INBOXEU_USER_ID` empty for address lookups.
+
+3. **Restart and verify.** Save the file and restart the MCP server your client uses. If you use a Secure MCP Tunnel that launches this server, restart that tunnel client. In ChatGPT, select **Inbox.eu Business** and ask “What is the account status of info@example.org?” In another MCP client, call `inboxeu_get_mailbox` with the following arguments.
+
+   ```json
+   {"mailboxEmail":"info@example.org"}
+   ```
+
+   A successful result includes the verified address in `data.email` and the internal ID in `data.id`. If the address has no mapping, the server asks for its ID. You can also supply both values for a one-time lookup, for example `{"mailboxEmail":"info@example.org","userId":"00123"}`. If Inbox.eu returns a different mailbox, check the edit link, correct the mapping, and restart the server. Older clients can pass the full address in `userId` for this read tool.
+
 ## Setting tool arguments in `.env`
 
-To look up your mailbox without entering the domain and mailbox ID each time, add these two lines to the `.env` file the server loads. Replace the sample values with your domain and internal mailbox ID, then restart the MCP server. You can now call `inboxeu_get_mailbox` with `{}`.
+To choose a default mailbox for calls with no arguments, set these two optional variables in `.env`. Replace the sample values with your domain and internal mailbox ID, then restart the MCP server. You can now call `inboxeu_get_mailbox` with `{}`.
 
 ```dotenv
 INBOXEU_DOMAIN_NAME=example.org
@@ -165,7 +189,7 @@ If one API key gives you access to several domains, enter it once in `INBOXEU_AP
 INBOXEU_DOMAINS='["example.org","example.net"]'
 ```
 
-To save mailbox IDs as well, use a JSON object in the same variable. To add a domain or mailbox, add it to this object.
+To store internal IDs by domain, you can also use arrays of IDs. To look up accounts by name, use the [address mapping format](#look-up-a-mailbox-by-email-address).
 
 ```dotenv
 INBOXEU_DOMAINS='{"example.org":["00123","00456"],"example.net":["00789"]}'
@@ -200,19 +224,19 @@ Inbox.eu publishes only the object type for both schemas. To get the field names
 
 ## Tools
 
-All nine read operations are available by default. `inboxeu_get_mailbox` returns administrative details for one mailbox. Listing the folders or messages inside it is outside the scope of the published Inbox.eu Business API. [Inbox.eu OpenAPI specification](./inboxeu-openapi.json)
+The nine read tools call the Inbox.eu Business administration API over HTTPS. A successful mailbox lookup confirms that Inbox.eu returned the account. Reading folders or messages and testing mail delivery are outside the scope of this API. [Inbox.eu OpenAPI specification](https://api.inbox.eu/api/v1/doc.json)
 
 | Tool | Arguments | Result |
 | --- | --- | --- |
 | `inboxeu_check_auth` | None | Checks whether the API key authenticates successfully. |
 | `inboxeu_get_profile` | None | Returns the current administrator's profile. |
 | `inboxeu_get_2fa_status` | None | Returns the `isEnabled` flag for two-factor authentication. |
-| `inboxeu_get_admin` | `domainAdmin` | Returns an administrator's profile by ID. |
+| `inboxeu_get_admin` | `domainAdmin` | Returns an administrator's profile by ID. If Inbox.eu denies the global lookup, the tool checks the configured default or sole domain. Without a default domain it checks the current profile. Either fallback must return the requested ID. |
 | `inboxeu_get_domain_admin` | `domainName`, `domainAdmin` | Returns the administrator's profile for the specified domain. |
-| `inboxeu_get_mailbox` | `domainName`, `userId` | Returns mailbox metadata. In the Inbox.eu Business control panel, find the internal ID in the URL path `/users/<userId>/…`. Check the returned `id` and `user` before changing the mailbox. |
+| `inboxeu_get_mailbox` | `domainName` and `userId`, or `mailboxEmail` with a mapped or supplied ID | Returns administrative details for one mailbox. With an email address, the tool verifies the identity in the response. |
 | `inboxeu_list_invoices` | `domainName` and optional `limit`, `offset`, `unexpired`, `order_column`, `order_direction` | Returns one page of invoices for the domain. |
 | `inboxeu_check_domain` | `hostName` | `available` indicates whether the domain name is available in the Inbox.eu database. |
-| `inboxeu_check_admin_email` | `email` | `available` indicates whether the email address can be used for an administrator. |
+| `inboxeu_check_admin_email` | `email` | Checks whether an address is available for **administrator registration**. To check a mailbox account, use `inboxeu_get_mailbox`. |
 
 To request the first page of invoices, pass `{"domainName":"example.org","limit":20,"offset":0}`. For the next page, increase `offset` by the number of records returned. Each invoice amount retains its original string representation and includes the currency when the API supplies it.
 
@@ -244,7 +268,7 @@ You can ask Inbox.eu to email an administrator invitation or send account detail
 
 - The server sends the key in the `Authorization: Bearer` header to a fixed API address. It blocks all redirects, including redirects to HTTP. If TLS certificate verification is disabled in Node.js, the server rejects the request before sending it.
 - When a tool call fails, the server returns `isError: true` and a short explanation in English. For example, an authentication error reads `Inbox.eu did not accept the API key for this operation.` Check `INBOXEU_API_KEY` if you see that message. If the operation requires more permissions, check the administrator's access to the domain. If you hit a rate limit, try again later.
-- For domain and administrator email checks, `available` indicates whether the domain name or email address is available. If Inbox.eu rejects the email check, the tool returns an error. [Inbox.eu API documentation](https://api.inbox.eu/api/v1/doc/)
+- For administrator email checks, an explicit reply from Inbox.eu that an address is available for registration returns `available: true`. An unrecognized error remains an error. A domain check reports only whether the domain name is available in Inbox.eu. [Inbox.eu API documentation](https://api.inbox.eu/api/v1/doc/)
 - When reading profiles, invoices, and two-factor authentication status, the server filters out keys, passwords, and secrets. To retrieve authenticator enrollment data or a mailbox sign-in token, explicitly call the corresponding tool in `full` mode.
-- Each tool call sends at most one API request. The timeout is 15 seconds and the maximum response body size is 1 MiB. If the connection drops after a write request is sent, check the result in the Inbox.eu control panel before retrying. For large invoice lists, reduce `limit`.
+- Each API request has a 15-second timeout and a maximum response body size of 1 MiB. If the connection drops after a write request is sent, check the result in the Inbox.eu control panel before retrying. For large invoice lists, reduce `limit`.
 - The operation result is available in `structuredContent`. The `content` text block gives a short explanation when an operation is rejected or a change is unconfirmed. For a partially completed batch, it gives a summary. Individual mailbox results are available in `structuredContent.data`.

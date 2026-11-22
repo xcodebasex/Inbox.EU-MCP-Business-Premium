@@ -70,7 +70,7 @@ export function dnsName(value, errorMessage = "Enter a valid domain name.") {
   return ascii;
 }
 
-function emailAddress(value) {
+export function emailAddress(value) {
   const errorMessage = "Enter a valid email address.";
   if (typeof value !== "string" || !new RegExp(email.pattern, "u").test(value)) {
     throw new InputError(errorMessage);
@@ -94,9 +94,16 @@ export function validateIdentifier(value) {
   return value;
 }
 
+export function validateMailboxId(value) {
+  if (typeof value === "string" && value.includes("@")) {
+    throw new InputError("Use the internal mailbox ID from the Inbox.eu Business Users page.");
+  }
+  return validateIdentifier(value);
+}
+
 function route(name, description, method, path, segments = {},
-  { query: queryFields = {}, requiredQuery = [], body } = {}) {
-  const properties = { ...segments, ...queryFields };
+  { query: queryFields = {}, requiredQuery = [], body, localFields = {} } = {}) {
+  const properties = { ...segments, ...queryFields, ...localFields };
   const required = [...Object.keys(segments), ...requiredQuery];
   if (body) {
     properties.body = body;
@@ -106,8 +113,10 @@ function route(name, description, method, path, segments = {},
     name, description, method, path,
     inputSchema: object(properties, required),
     build(args = {}) {
-      const resolved = path.replace(/\{(\w+)\}/g, (_, key) =>
-        encodeURIComponent(segments[key] === hostname ? dnsName(args[key]) : validateIdentifier(args[key])));
+      const resolved = path.replace(/\{(\w+)\}/g, (_, key) => {
+        const validate = segments[key] === hostname ? dnsName : key === "userId" ? validateMailboxId : validateIdentifier;
+        return encodeURIComponent(validate(args[key]));
+      });
       const query = {};
       for (const [key, schema] of Object.entries(queryFields)) {
         if (Object.hasOwn(args, key)) query[key] = schema === email ? emailAddress(args[key]) : args[key];
@@ -134,7 +143,9 @@ function form(name, description, method, path, inputSchema, normalize) {
 }
 
 const mailboxPath = "/api/v1/domains/{domainName}/mail_users/{userId}";
-const mailboxParams = { domainName: hostname, userId: identifier };
+const mailboxParams = { domainName: hostname, userId: {
+  ...identifier, description: "Internal mailbox ID from the Inbox.eu Business Users page (/users/<ID>/).",
+} };
 const adminPath = "/api/v1/domains/{domainName}/domain_admins/{domainAdmin}";
 const adminParams = { domainName: hostname, domainAdmin: identifier };
 
@@ -149,16 +160,19 @@ export const operations = [
     "GET", "/api/v1/domain_admins/{domainAdmin}", { domainAdmin: identifier }),
   route("inboxeu_get_domain_admin", "Get an administrator associated with a particular domain.",
     "GET", adminPath, adminParams),
-  route("inboxeu_get_mailbox", "Get a domain mailbox account by its Inbox.eu user identifier.",
-    "GET", mailboxPath, mailboxParams),
+  route("inboxeu_get_mailbox",
+    "Read mailbox account metadata. For a named address, pass its full mailboxEmail. An unmapped address also requires its internal userId. To read by ID alone, use domainName and userId.",
+    "GET", mailboxPath, mailboxParams, { localFields: { mailboxEmail: {
+      ...email, description: "Full mailbox address to look up locally and verify against the returned account.",
+    } } }),
   route("inboxeu_list_invoices", "List invoices for a domain. Use limit and offset to page through results.",
     "GET", "/api/v1/domains/{domainName}/transactions/", { domainName: hostname }, { query: {
       unexpired: nonemptyText, order_column: nonemptyText, order_direction: nonemptyText,
       limit: pageNumber, offset: pageNumber,
     } }),
-  route("inboxeu_check_domain", "Check if a hostname is already used in the Inbox.eu database.",
+  route("inboxeu_check_domain", "Check domain name availability in Inbox.eu. This checks the domain only. To check a particular mailbox, use inboxeu_get_mailbox.",
     "GET", "/api/v1/domain_find/{hostName}", { hostName: hostname }),
-  route("inboxeu_check_admin_email", "Check if an email address is already used by an Inbox.eu administrator.",
+  route("inboxeu_check_admin_email", "Check whether an email address is available for administrator registration. To check a mailbox account, use inboxeu_get_mailbox.",
     "GET", "/api/v1/emails/admin", {}, { query: { email }, requiredQuery: ["email"] }),
   form("inboxeu_create_admin",
     "Create an Inbox.eu administrator, optionally with a domain and mailboxes. When password is omitted Inbox.eu emails a generated password.",

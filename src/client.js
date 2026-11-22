@@ -1,19 +1,26 @@
+import { isDeepStrictEqual } from 'node:util';
+
 const ORIGIN = 'https://api.inbox.eu';
 const MAX_BYTES = 1024 * 1024;
 const DOMAIN_CHECK = /^\/api\/v1\/domain_find\/[^/]+$/;
 const EMAIL_CHECK = '/api/v1/emails/admin';
+const AVAILABLE_ADMIN_EMAIL = {
+  error: 'RestValidationException',
+  errorMessages: ['Email not found and is available for registration.'],
+};
 const CREATE_IMPERSONATION = /^\/api\/v1\/domains\/[^/]+\/mail_users\/[^/]+\/impersonation\/impersonate$/;
 const UNCERTAIN = ' The change may have been applied. Check Inbox.eu before retrying.';
 
 export class InboxEuError extends Error {
-  constructor(message) {
+  constructor(message, httpStatus) {
     super(message);
     this.name = 'InboxEuError';
+    Object.defineProperty(this, 'httpStatus', { value: httpStatus });
   }
 }
 
-function apiError(message, uncertain = false) {
-  return new InboxEuError(message + (uncertain ? UNCERTAIN : ''));
+function apiError(message, uncertain = false, httpStatus) {
+  return new InboxEuError(message + (uncertain ? UNCERTAIN : ''), httpStatus);
 }
 
 function requestUrl(path, query) {
@@ -93,7 +100,11 @@ function statusMessage(status, method, path) {
         return 'Could not read the mailbox. Check the domain and mailbox ID.';
       }
       return 'Inbox.eu rejected the request. Check the supplied values.';
-    case 401: return 'Inbox.eu did not accept the API key for this operation.';
+    case 401:
+      if (method === 'GET' && /^\/api\/v1\/domain_admins\/[^/]+$/.test(path)) {
+        return 'Administrator lookup was denied. Try the domain administrator lookup.';
+      }
+      return 'Inbox.eu did not accept the API key for this operation.';
     case 403: return 'You do not have permission for this operation.';
     case 404:
       if (method === 'GET' && path === EMAIL_CHECK) return 'Could not verify the administrator email address. Check the spelling.';
@@ -116,6 +127,7 @@ function expectedEnvelope(method, path, status) {
   }
   if (method === 'GET' && path === EMAIL_CHECK) {
     if (status === 200) return 'array';
+    if (status === 404) return 'availableAdminEmail';
     if (status === 422) return 'error';
     return null;
   }
@@ -126,6 +138,7 @@ function expectedEnvelope(method, path, status) {
 }
 
 function matchesEnvelope(value, kind) {
+  if (kind === 'availableAdminEmail') return isDeepStrictEqual(value, AVAILABLE_ADMIN_EMAIL);
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   if (kind === 'error') {
     return typeof value.error === 'string' ||
@@ -170,19 +183,21 @@ export function createClient({ apiKey, fetchImpl = fetch, timeoutMs = 15000 }) {
     if (!kind) {
       cancelBody(response);
       const uncertain = mutation && (status >= 500 || status === 408 || (status >= 200 && status < 400));
-      throw apiError(statusMessage(status, method, path), uncertain);
+      throw apiError(statusMessage(status, method, path), uncertain, status);
     }
+    // The provider also uses a generic not-found response for invalid email checks.
+    const emailCheckError = kind === 'availableAdminEmail' ? statusMessage(status, method, path) : null;
     let data;
     try {
       data = await readEnvelope(response, active, apiKey);
     } catch (error) {
-      let message = 'Could not read the response from Inbox.eu.';
+      let message = emailCheckError ?? 'Could not read the response from Inbox.eu.';
       if (error?.message === 'limit') message = 'The response exceeds 1 MiB. Request a smaller page if available.';
       if (active.aborted) message = abortMessage(active);
       throw apiError(message, mutation);
     }
     if (!matchesEnvelope(data, kind)) {
-      throw apiError('Inbox.eu returned an unrecognized response.', mutation);
+      throw apiError(emailCheckError ?? 'Inbox.eu returned an unrecognized response.', mutation);
     }
     return { status, data };
   };

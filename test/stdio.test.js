@@ -320,6 +320,60 @@ test("a single listed domain supplies the domain for a read without exposing its
   assert.deepEqual((await requests()).map(req => req.url), [apiRoot + "/domain_find/xn--bcher-kva.example"]);
 });
 
+test("address lookups select the named mailbox across domains and verify its returned identity", async t => {
+  const target = { domainName: "xn--bcher-kva.example", id: "002", user: "Info" };
+  const { client, call, requests } = await connectFixture(t, [
+    { body: { data: target } }, { body: { data: [target] } },
+    { body: { data: { id: "099", user: "new", domainName: "other.example" } } },
+    { body: { data: { ...target, user: "estate" } } },
+  ], { accessMode: "full", defaults: {
+    INBOXEU_DOMAINS: JSON.stringify({ "other.example": ["001"], "Bücher.example": { Info: "002" } }),
+    INBOXEU_DOMAIN_NAME: "other.example", INBOXEU_USER_ID: "001",
+  } });
+  const tool = "inboxeu_get_mailbox";
+  const mailboxEmail = "Info@BÜCHER.example";
+  const canonicalEmail = "Info@xn--bcher-kva.example";
+  assert.ok(!JSON.stringify(await client.listTools()).includes(canonicalEmail));
+  const unknown = await call(tool, { mailboxEmail: "unknown@other.example" });
+  assert.equal(unknown.isError, true);
+  assert.match(unknown.content[0].text, /internal mailbox ID.*unknown@other\.example/);
+  assert.ok(!unknown.content[0].text.includes("001"));
+  for (const args of [
+    { mailboxEmail, userId: "001" }, { mailboxEmail, domainName: "other.example" },
+    { mailboxEmail, userId: "another@other.example" },
+  ]) assert.equal((await call(tool, args)).isError, true);
+  assert.equal((await call("inboxeu_delete_mailbox", { domainName: "other.example", userId: mailboxEmail })).isError, true);
+  assert.deepEqual(await requests(), []);
+
+  const byAddress = resultData(await call(tool, { mailboxEmail }));
+  assert.equal(byAddress.data.id, "002");
+  assert.equal(byAddress.data.email, canonicalEmail);
+  const byLegacyArgument = resultData(await call(tool, { userId: mailboxEmail }));
+  assert.equal(byLegacyArgument.data[0].email, canonicalEmail);
+  assert.equal(resultData(await call(tool, { mailboxEmail: "new@other.example", userId: "099" })).data.id, "099");
+  const stale = await call(tool, { mailboxEmail });
+  assert.equal(stale.isError, true);
+  assert.match(stale.content[0].text, /did not confirm the requested mailbox/);
+  assert.ok(!JSON.stringify(stale).includes("estate"));
+  const namedPath = apiRoot + "/domains/xn--bcher-kva.example/mail_users/002";
+  assert.deepEqual((await requests()).map(req => req.url), [
+    namedPath, namedPath, apiRoot + "/domains/other.example/mail_users/099", namedPath,
+  ]);
+});
+
+test("a client using the old userId argument can answer an unmapped mailbox address prompt", async t => {
+  const { call, requests } = await connectFixture(t, [
+    { body: { data: { id: "17", email: "info@example.org" } } },
+  ], { defaults: { INBOXEU_DOMAIN_NAME: "other.example", INBOXEU_USER_ID: "999" },
+    onElicit: async form => {
+      assert.match(form.message, /info@example\.org/);
+      return { action: "accept", content: { userId: "17" } };
+    },
+  });
+  assert.equal(resultData(await call("inboxeu_get_mailbox", { userId: "info@example.org" })).data.id, "17");
+  assert.deepEqual((await requests()).map(req => req.url), [apiRoot + "/domains/example.org/mail_users/17"]);
+});
+
 test("mailbox reads resolve within the selected domain and report ambiguous choices locally", async t => {
   const domains = { "a.example": ["42117", "42118"], "bücher.example": ["003"] };
   const { client, call, requests } = await connectFixture(t, [

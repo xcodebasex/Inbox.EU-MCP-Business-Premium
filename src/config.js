@@ -1,11 +1,13 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { isDeepStrictEqual, parseArgs, parseEnv } from "node:util";
-import { dnsName, operations, validateIdentifier } from "./operations.js";
+import { dnsName, emailAddress, operations, validateIdentifier, validateMailboxId } from "./operations.js";
 
 export class ConfigError extends Error {}
 
 export function argumentEnvName(operation, field) {
+  // The address-to-ID directory belongs in INBOXEU_DOMAINS. The requested address is per call.
+  if (field === "mailboxEmail") return undefined;
   const type = operation.inputSchema.properties[field].type;
   if (type === "string" && ["domainName", "hostName", "hostname"].includes(field)) return "INBOXEU_DOMAIN_NAME";
   if (field === "userId") return "INBOXEU_USER_ID";
@@ -32,24 +34,34 @@ function parseArgument(value, type, variable) {
 
 function parseDomains(value) {
   const domains = new Map();
-  if (!value?.trim()) return domains;
+  const mailboxAddresses = new Map();
+  if (!value?.trim()) return { domains, mailboxAddresses };
   try {
     const parsed = JSON.parse(value);
     if (parsed === null || typeof parsed !== "object") throw new TypeError();
     const entries = Array.isArray(parsed)
       ? parsed.map(name => [name, []])
       : Object.entries(parsed);
-    for (const [name, ids] of entries) {
+    for (const [name, mailboxes] of entries) {
       const domain = dnsName(name);
-      if (domains.has(domain) || !Array.isArray(ids)) throw new TypeError();
-      const mailboxIds = ids.map(id => validateIdentifier(id));
+      if (domains.has(domain) || !mailboxes || typeof mailboxes !== "object") throw new TypeError();
+      let mailboxIds;
+      if (Array.isArray(mailboxes)) {
+        mailboxIds = mailboxes.map(validateIdentifier);
+      } else {
+        mailboxIds = Object.entries(mailboxes).map(([local, id]) => {
+          const address = emailAddress(local + "@" + domain);
+          mailboxAddresses.set(address, validateMailboxId(id));
+          return id;
+        });
+      }
       if (new Set(mailboxIds).size !== mailboxIds.length) throw new TypeError();
       domains.set(domain, mailboxIds);
     }
   } catch {
-    throw new ConfigError("Invalid INBOXEU_DOMAINS. Expected unique domain names in a JSON array or an object mapping domains to arrays of unique mailbox ID strings.");
+    throw new ConfigError("Invalid INBOXEU_DOMAINS. Use a domain list, or map each domain to unique mailbox IDs or mailbox names and IDs.");
   }
-  return domains;
+  return { domains, mailboxAddresses };
 }
 
 function loadToolDefaults(settings, mode) {
@@ -59,6 +71,7 @@ function loadToolDefaults(settings, mode) {
     const args = {};
     for (const [field, schema] of Object.entries(operation.inputSchema.properties)) {
       const variable = argumentEnvName(operation, field);
+      if (!variable) continue;
       const value = settings[variable];
       if (value !== undefined && value !== "") args[field] = parseArgument(value, schema.type, variable);
     }
@@ -73,7 +86,7 @@ function serverSettings(settings, cliMode) {
   if (mode !== "read-only" && mode !== "full") {
     throw new ConfigError("Unknown mode. Set INBOXEU_MODE or --mode to read-only or full.");
   }
-  const domains = parseDomains(settings.INBOXEU_DOMAINS);
+  const { domains, mailboxAddresses } = parseDomains(settings.INBOXEU_DOMAINS);
   if (settings.INBOXEU_DOMAIN_NAME) {
     settings.INBOXEU_DOMAIN_NAME = dnsName(settings.INBOXEU_DOMAIN_NAME, "Invalid INBOXEU_DOMAIN_NAME. Enter a valid domain name.");
   } else if (domains.size === 1) {
@@ -86,6 +99,7 @@ function serverSettings(settings, cliMode) {
   return {
     mode,
     domains,
+    ...(mailboxAddresses.size ? { mailboxAddresses } : {}),
     toolDefaults: loadToolDefaults(settings, mode),
     legacyWrites: selectedMode === undefined && settings.INBOXEU_ENABLE_WRITES === "true",
   };
