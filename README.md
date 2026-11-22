@@ -154,6 +154,12 @@ INBOXEU_DOMAINS='{"example.org":{"info":"00123","sales":"00456"},"example.net":{
 
 An explicit or configured ID skips directory discovery. The same address check applies to the returned account. Restart the server after editing `INBOXEU_DOMAINS`. Older clients can pass the full address in `userId` for this read tool.
 
+### Mailbox addresses and aliases
+
+`inboxeu_list_mailboxes` and `inboxeu_get_mailbox` use primary mailbox addresses. An address missing from the directory may still receive mail as an alias. In the Inbox.eu Business control panel, open **Aliases** and find the address under **Active aliases**. **Existing user** shows which mailbox receives its mail. The published HTTPS API has no documented alias lookup or management operations, and neither MCP mode offers them. [Inbox.eu API specification](https://api.inbox.eu/api/v1/doc.json)
+
+If you intend to delete an entire mailbox, first look up its primary address with `inboxeu_get_mailbox` and confirm the returned `data.email`. In `full` mode, pass the domain of that address as `domainName` and the verified `data.id` as `userId` to `inboxeu_delete_mailbox`. To remove only an alias, use the **Aliases** section in the control panel.
+
 ## Setting tool arguments in `.env`
 
 To choose a default mailbox for calls with no arguments, set these two optional variables in `.env`. Replace the sample values with your domain and internal mailbox ID, then restart the MCP server. You can now call `inboxeu_get_mailbox` with `{}`.
