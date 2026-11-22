@@ -1,64 +1,111 @@
 # Inbox.EU MCP (Business Premium)
 
-Локальный MCP-сервер для администрирования бизнес-почты Inbox.eu. Режим `read-only` открывает 9 инструментов чтения. Режим `full` открывает все 23 операции с описанным назначением, включая удаление аккаунтов и отправку служебных писем. Фактические права определяет Inbox.eu по API-ключу. Требуется Node.js 22 или новее.
+[Russian-language guide](./README.ru.md)
 
-Все сетевые вызовы MCP-сервера идут по HTTPS на `https://api.inbox.eu` с проверкой сертификата. Связь Codex с дочерним процессом MCP локальная, через `stdio`.
+Use this local Model Context Protocol (MCP) server to manage Inbox.eu Business Premium domains and mailboxes. It starts in `read-only` mode with nine tools for checking access and looking up administrators, mailboxes, and invoices. Switch to `full` to enable all 23 tools, including mailbox updates, account deletion, and email invitations. Your Inbox.eu API key determines which operations the service allows.
 
-Контрактные тесты используют [локальную копию](./inboxeu-openapi.json) версии 1.0.0, полученную 22 ноября 2026 года. Работающий сервер обращается непосредственно к API. [Исходная спецификация Inbox.eu](https://api.inbox.eu/api/v1/doc.json)
+The server requires **Node.js 22 or later**. Your MCP client starts it as a local process and communicates over `stdio`. The server sends API requests over HTTPS to `https://api.inbox.eu` and verifies the TLS certificate.
 
-## Подключение к Codex
+The contract tests use version 1.0.0 of the Inbox.eu API specification, saved on November 22, 2026. At runtime, the server calls the live API. [Bundled OpenAPI specification](./inboxeu-openapi.json) · [Upstream specification](https://api.inbox.eu/api/v1/doc.json)
 
-1. В каталоге проекта установите зависимости из lock-файла и запустите тесты. Для тестов достаточно локальных фикстур.
+## Install and run locally
 
-   ```powershell
-   npm.cmd ci --ignore-scripts
-   npm.cmd test
+1. Install Node.js 22 or later with npm. Clone the repository and open its directory. You can also download the ZIP from GitHub, extract it, and open a terminal in the folder containing `package.json`.
+
+   ```sh
+   git clone https://github.com/xcodebasex/Inbox.EU-MCP-Business-Premium.git
+   cd Inbox.EU-MCP-Business-Premium
    ```
 
-2. Создайте токен для подтверждённого домена в Inbox.eu Business и впишите его после `INBOXEU_API_KEY=` в `.env` рядом с `package.json`. Если файла ещё нет, создайте его из шаблона. Файл должен быть доступен учётной записи MCP-сервера и закрыт для посторонних пользователей и процессов песочницы. [Шаблон .env.example](./.env.example) · [Выдача токена](https://a.inbox.eu/en/api_access/)
+2. Check your Node.js version, install the dependencies, and run the tests. The tests use local fixtures and can run without an API key.
+
+   ```sh
+   node --version
+   npm ci --ignore-scripts
+   npm test
+   ```
+
+   In Windows PowerShell, you can use `npm.cmd` for both commands.
+
+3. Create `.env` beside `package.json`. Use the command for your system. Both commands preserve an existing configuration.
+
+   **Windows PowerShell**
+
+   ```powershell
+   if (-not (Test-Path -LiteralPath .env)) { Copy-Item -LiteralPath .env.example -Destination .env }
+   ```
+
+   **macOS or Linux**
+
+   ```sh
+   [ -e .env ] || cp .env.example .env
+   ```
+
+   Open `.env` in a text editor. Enter your Inbox.eu Business API key after `INBOXEU_API_KEY=` and keep `read-only` for your first run. Restrict file access to the account running the server. [Configuration template](./.env.example) · [Get an Inbox.eu API key](https://a.inbox.eu/en/api_access/)
 
    ```dotenv
    INBOXEU_API_KEY=
    INBOXEU_MODE=read-only
    ```
 
-3. Добавьте секцию в `~/.codex/config.toml`. В `args` укажите абсолютный путь к серверу. Настройка `writes` включает в Codex запрос подтверждения для операций записи, включая удаление ящика и отправку сведений о нём. [Настройки MCP в Codex](https://developers.openai.com/codex/mcp/)
+4. Start the server from the project directory.
 
-   ```toml
-   [mcp_servers.inboxeu]
-   command = "node"
-   args = ["C:/Projects/InboxeuMCP/src/index.js"]
-   default_tools_approval_mode = "writes"
+   ```sh
+   node src/index.js
    ```
 
-4. В новом сеансе Codex отправьте запрос «Проверь доступ к Inbox.eu через `inboxeu_check_auth`». Действующий ключ даёт ответ `{"authenticated":true}`. Список инструментов можно посмотреть даже до добавления ключа.
+   A quiet terminal is expected. The server waits for MCP messages on standard input and writes protocol responses to standard output. Press **Ctrl+C** to stop the manual run.
 
-В другом MCP-клиенте выберите транспорт `stdio`, команду `node` и те же аргументы запуска. Сервер читает все настройки `INBOXEU_*` из одного файла. По умолчанию это `.env` рядом с `package.json` независимо от рабочего каталога клиента. Если храните `.env` в личном каталоге, укажите его абсолютный путь после `--env-file` в `args`. Тогда сервер прочитает только выбранный файл. `.env.example` служит только шаблоном.
+## Connect an MCP client and check access
 
-## Выбор режима
+In a client that supports local MCP servers, add a server named `inboxeu`, choose the `stdio` transport, set the command to `node`, and pass the **absolute path to `src/index.js`** as the first argument. The client starts its own server process. If the client uses an `mcpServers` JSON configuration, use this example and replace the path with your actual installation path.
 
-Установите `INBOXEU_MODE=read-only` или `INBOXEU_MODE=full` в `.env` и перезапустите MCP-сервер. В режиме чтения инструменты записи отсутствуют в каталоге, а прямой вызов по их имени отклоняется до обращения к API.
-
-Для отдельного запуска режим можно закрепить в аргументах клиента. Например, такая настройка всегда открывает сервер в режиме чтения, даже если в `.env` выбран `full`.
-
-```toml
-args = ["C:/Projects/InboxeuMCP/src/index.js", "--env-file", "C:/Private/InboxeuMCP/.env", "--mode", "read-only"]
+```json
+{
+  "mcpServers": {
+    "inboxeu": {
+      "command": "node",
+      "args": ["/absolute/path/to/Inbox.EU-MCP-Business-Premium/src/index.js"]
+    }
+  }
+}
 ```
 
-Аргумент `--mode` имеет приоритет над `INBOXEU_MODE` из выбранного файла. Если оба значения пропущены, действует `read-only`. Неизвестное значение режима или недоступный явно указанный файл останавливает запуск. Для перехода со старого `INBOXEU_ENABLE_WRITES=true` выберите `full` явно.
+On Windows, a path such as `C:/Projects/Inbox.EU-MCP-Business-Premium/src/index.js` works. If your client cannot find `node`, use the absolute path to the executable. You can find it with `(Get-Command node).Source` in PowerShell or `command -v node` on macOS and Linux.
 
-## Параметры инструментов в .env
+Restart the connection and open the client's tool list (`tools/list`). In `read-only` mode you should see nine tools, even before adding a key. To verify the key itself, call `inboxeu_check_auth` with `{}`. A valid key returns `{"authenticated":true}`.
 
-Чтобы получать сведения о своём ящике без повторного ввода домена и ID, заполните две строки в загружаемом `.env` и перезапустите MCP-сервер. После этого можно вызвать `inboxeu_get_mailbox` с `{}`. В примере подставьте домен и внутренний ID своего ящика.
+All `INBOXEU_*` settings come from one file. The default is `.env` beside `package.json`, regardless of the client's working directory. To keep it elsewhere, pass the absolute path with `--env-file`.
+
+## Choose an access mode
+
+Set `INBOXEU_MODE` in `.env` and restart the server after a change.
+
+| Mode | Tools available |
+| --- | --- |
+| `read-only` (default) | Nine read tools. The server rejects a direct call to a write tool before contacting Inbox.eu. |
+| `full` | All 23 tools. Write operations still require the corresponding permissions in Inbox.eu. |
+
+To pin a launch to read-only mode and select a private configuration file, run the following command from the project directory, using the path to your file. In a client configuration, append the same options and values to the arguments array as separate strings.
+
+```sh
+node src/index.js --env-file "/absolute/path/to/private/.env" --mode read-only
+```
+
+`--mode` takes precedence over `INBOXEU_MODE`. The server stops at startup if the mode is unknown or an explicitly selected file cannot be read. If you previously used `INBOXEU_ENABLE_WRITES=true`, select `full` explicitly to enable writes.
+
+## Setting tool arguments in `.env`
+
+To look up your mailbox without entering the domain and mailbox ID each time, add these two lines to the `.env` file the server loads. Replace the sample values with your domain and internal mailbox ID, then restart the MCP server. You can now call `inboxeu_get_mailbox` with `{}`.
 
 ```dotenv
 INBOXEU_DOMAIN_NAME=example.org
 INBOXEU_USER_ID=00123
 ```
 
-`INBOXEU_DOMAIN_NAME` задаёт домен в путях API, а также имя домена для проверки и приглашения администратора. `INBOXEU_USER_ID` задаёт ID ящика, `INBOXEU_DOMAIN_ADMIN` — ID администратора. При создании администратора поле `domainName` принимает отдельный JSON-объект. Остальные переменные сгруппированы по инструментам в [.env.example](./.env.example).
+`INBOXEU_DOMAIN_NAME` sets the domain used in API paths, domain checks, and administrator invitations. `INBOXEU_USER_ID` sets the mailbox ID, and `INBOXEU_DOMAIN_ADMIN` sets the administrator ID. When you create an administrator, the `domainName` field takes a separate JSON object. The remaining variables are grouped by tool in [.env.example](./.env.example).
 
-Строки, включая ID с ведущими нулями, вводите как текст. Для целых чисел и логических значений используйте запись JSON, например `20`, `true` или `false`, с учётом ограничений конкретного поля. Массивы и объекты удобно заключить в одинарные кавычки снаружи и использовать двойные кавычки внутри.
+Enter strings as plain text to preserve values such as mailbox IDs with leading zeros. Use JSON syntax for integers and booleans, such as `20`, `true`, or `false`, and choose values within the limits of each field. For arrays and objects, use double quotes inside the JSON and wrap the whole value in single quotes.
 
 ```dotenv
 INBOXEU_LIST_INVOICES_LIMIT=20
@@ -68,54 +115,39 @@ INBOXEU_UPDATE_PROFILE_PREFS='{"itemsPerPage":50}'
 INBOXEU_CREATE_MAILBOXES_BODY='[{"user":"office"}]'
 ```
 
-Значение из вызова заменяет всё соответствующее поле, включая объект или массив целиком. Например, `{"limit":5}` в вызове `inboxeu_list_invoices` переопределит лимит и сохранит домен из `.env`. Пустые настройки в `.env` сервер пропускает. Изменения в файле вступают в силу после перезапуска MCP-сервера.
+A tool argument overrides the entire corresponding field, including a whole object or array. For example, calling `inboxeu_list_invoices` with `{"limit":5}` overrides the limit and keeps the domain from `.env`. The server skips empty settings in `.env`. Restart the MCP server for file changes to take effect.
 
-Сервер задаёт вопрос только об обязательном домене (`domainName`, `hostName` или `hostname`) или ID ящика (`userId`), если значение пропущено при вызове и его нельзя однозначно определить из `.env`. Если нужны оба значения, сервер сначала уточнит домен. Затем он спросит ID только в том случае, если ящик всё ещё нужно выбрать. Остальные обязательные параметры передайте при вызове или задайте в `.env`.
+The server prompts only for a required domain (`domainName`, `hostName`, or `hostname`) or mailbox ID (`userId`) that you omitted from the call and that it cannot determine unambiguously from `.env`. If it needs both, it asks for the domain first. It then asks for the ID only if the mailbox still needs to be selected. Supply other required arguments in the call or set them in `.env`.
 
-Если MCP-клиент поддерживает формы, он предложит ввести значение вручную и покажет подсказки из `.env`, когда они есть. При отказе или отмене формы сервер завершит вызов без обращения к Inbox.eu. Клиент без поддержки форм получит вопрос на английском. После ответа пользователя клиенту нужно повторить вызов, добавив запрошенный аргумент. Сервер проверяет итоговые аргументы до обращения к API.
+If your MCP client supports forms, it prompts you to enter the value and shows suggestions from `.env` when available. If you decline or cancel the form, the server ends the call without contacting Inbox.eu. A client without form support receives a question in English. After you answer, the client needs to repeat the call with the requested argument. The server validates the resulting arguments before contacting the API.
 
-Заполненные поля записи, включая пароль или адрес получателя, применяются при каждом вызове соответствующего инструмента, если вы их не переопределили. Для разовой операции передайте такие значения в самом вызове. При смене домена проверьте, что указанный ID ящика принадлежит этому домену.
+Values you set for write operations, including passwords and recipient addresses, apply to every call to the corresponding tool unless you override them. For a one-time operation, pass those values in the call itself. When switching domains, check that the mailbox ID belongs to the selected domain.
 
-### Один ключ для нескольких доменов
+### Using one API key for multiple domains
 
-Если один ключ даёт доступ к нескольким доменам, запишите его один раз в `INBOXEU_API_KEY`. Для списка доменов используйте JSON-массив в `INBOXEU_DOMAINS`.
+If one API key gives you access to several domains, enter it once in `INBOXEU_API_KEY`. To list the domains, use a JSON array in `INBOXEU_DOMAINS`.
 
 ```dotenv
 INBOXEU_DOMAINS='["example.org","example.net"]'
 ```
 
-Чтобы сохранить ещё и ID ящиков, укажите в той же переменной JSON-объект. Для добавления домена или ящика дополните этот JSON.
+To save mailbox IDs as well, use a JSON object in the same variable. To add a domain or mailbox, add it to this object.
 
 ```dotenv
 INBOXEU_DOMAINS='{"example.org":["00123","00456"],"example.net":["00789"]}'
 ```
 
-Домен по умолчанию задаёт `INBOXEU_DOMAIN_NAME`. Если эта переменная пуста и в списке ровно один домен, сервер выберет его автоматически.
+`INBOXEU_DOMAIN_NAME` sets the default domain. If it is empty and exactly one domain is listed, the server selects that domain automatically.
 
-При заполненном `INBOXEU_DOMAINS` сервер подбирает ящик только в выбранном домене. Для основного домена можно задать ящик по умолчанию в `INBOXEU_USER_ID`. Если у этого домена есть непустой список ID, значение `INBOXEU_USER_ID` должно входить в него. Без заданного ящика по умолчанию сервер подставит единственный ID выбранного домена.
+When `INBOXEU_DOMAINS` contains entries, the server looks up mailbox IDs only within the selected domain. You can set the default mailbox for the default domain in `INBOXEU_USER_ID`. If that domain has a nonempty list of IDs, the list must include `INBOXEU_USER_ID`. If no default mailbox is set and the selected domain has exactly one listed ID, the server uses that ID.
 
-В примере с JSON-объектом вызов `inboxeu_get_mailbox` с `{"domainName":"example.net"}` выберет ящик `00789`, даже если для основного домена `example.org` задан `INBOXEU_USER_ID=00123`. Второй ящик в `example.org` можно выбрать прямо при вызове.
+In the JSON object example above, calling `inboxeu_get_mailbox` with `{"domainName":"example.net"}` selects mailbox `00789`, even if `INBOXEU_USER_ID=00123` is set for the default domain, `example.org`. To select the second mailbox in `example.org`, pass its ID in the call.
 
 ```json
 {"domainName":"example.org","userId":"00456"}
 ```
 
-Вы можете явно указать домен и ID вне списка. При переключении между доменами сервер использует тот же ключ, а доступ к выбранному ящику проверяет Inbox.eu. Перезапуск при таком вызове не требуется.
-
-### Токен входа и отправка сведений о ящике
-
-Эти настройки нужны только для соответствующих инструментов в режиме `full`. В режиме `read-only` их можно оставить пустыми. Записывайте каждую переменную на отдельной строке без завершающего `\`.
-
-При непустом `INBOXEU_DOMAINS` сервер подставляет `INBOXEU_IMPERSONATION_TOKEN` только для ящика по умолчанию. Его определяют домен по умолчанию и `INBOXEU_USER_ID` либо единственный ID в списке этого домена. Для другого ящика или при отсутствии ящика по умолчанию передайте выданный нужному ящику токен в аргументе `impersonationToken`.
-
-| Переменная в `.env` | Что указать и где взять значение |
-| --- | --- |
-| `INBOXEU_IMPERSONATION_TOKEN` | Токен входа в конкретный ящик. Чтобы получить его, вызовите `inboxeu_create_impersonation_token` с доменом, внутренним ID ящика и телом `ApiMailUser`. Скопируйте значение поля `structuredContent.impersonationToken` из ответа. Для разовой проверки передайте его как аргумент `impersonationToken` того же ящика. Ключ администратора хранится отдельно в `INBOXEU_API_KEY`. |
-| `INBOXEU_VALIDATE_IMPERSONATION_TOKEN_BODY` | JSON-объект `ApiMailUser` для проверки токена. В документации откройте раздел **Mailbox users** → `POST …/impersonation/validate` → **Request body**. В эту переменную запишите тело запроса. Сам токен передаётся отдельно через `INBOXEU_IMPERSONATION_TOKEN`. |
-| `INBOXEU_VALIDATE_IMPERSONATION_TOKEN_IMPERSONATION_TOKEN` | Это имя MCP игнорирует. Оставьте нужный токен в одной строке `INBOXEU_IMPERSONATION_TOKEN`, затем удалите строку с длинным именем. |
-| `INBOXEU_SEND_MAILBOX_DETAILS_BODY` | JSON-объект `MailUserDetails` для служебного письма со сведениями о созданном или изменённом ящике. В документации откройте **Send details for mailbox users** → `POST …/details` → **Request body**. Перед отправкой проверьте адрес получателя в подготовленном теле запроса. |
-
-Inbox.eu публикует для обеих схем только тип «объект». Чтобы узнать точные поля, включая поле адресата для письма, возьмите тело успешного запроса к тому же методу из своей интеграции или запросите образец у `support@inbox.eu`, указав метод и название схемы. Сохраните этот JSON в одинарных кавычках в `.env` и перезапустите MCP. [Документация Inbox.eu](https://api.inbox.eu/api/v1/doc/) · [Схемы OpenAPI](https://api.inbox.eu/api/v1/doc.json)
+You can also explicitly pass a domain and mailbox ID outside the list. The server uses the same API key when switching domains, and Inbox.eu checks access to the selected mailbox. You can make this call without restarting the server.
 
 ### Mailbox sign-in tokens and account details
 
@@ -132,53 +164,53 @@ When `INBOXEU_DOMAINS` contains entries, the server uses `INBOXEU_IMPERSONATION_
 
 Inbox.eu publishes only the object type for both schemas. To get the field names, including the recipient field for the email, use the body of a successful request to the same endpoint from your integration, or ask `support@inbox.eu` for a sample and include the endpoint and schema name. Put the JSON in single quotes in `.env` and restart the MCP server. [Inbox.eu API docs](https://api.inbox.eu/api/v1/doc/) · [OpenAPI schemas](https://api.inbox.eu/api/v1/doc.json)
 
-## Инструменты
+## Tools
 
-По умолчанию доступны все девять операций чтения, описанных в OpenAPI.
+All nine read operations described in the OpenAPI specification are available by default.
 
-| Инструмент | Вход | Результат |
+| Tool | Arguments | Result |
 | --- | --- | --- |
-| `inboxeu_check_auth` | — | Проверка API-ключа |
-| `inboxeu_get_profile` | — | Профиль текущего администратора |
-| `inboxeu_get_2fa_status` | — | Флаг `isEnabled` для двухфакторной аутентификации |
-| `inboxeu_get_admin` | `domainAdmin` | Профиль администратора по его идентификатору |
-| `inboxeu_get_domain_admin` | `domainName`, `domainAdmin` | Профиль администратора указанного домена |
-| `inboxeu_get_mailbox` | `domainName`, `userId` | Метаданные ящика. В панели Inbox.eu Business внутренний ID можно взять из пути `/users/<userId>/…`. Перед изменением сверьте возвращённые `id` и `user`. |
-| `inboxeu_list_invoices` | `domainName`, опционально `limit`, `offset`, `unexpired`, `order_column`, `order_direction` | Страница счетов домена |
-| `inboxeu_check_domain` | `hostName` | `available` показывает, свободно ли имя в базе Inbox.eu |
-| `inboxeu_check_admin_email` | `email` | `available` показывает, можно ли использовать email для администратора |
+| `inboxeu_check_auth` | None | Checks whether the API key authenticates successfully. |
+| `inboxeu_get_profile` | None | Returns the current administrator's profile. |
+| `inboxeu_get_2fa_status` | None | Returns the `isEnabled` flag for two-factor authentication. |
+| `inboxeu_get_admin` | `domainAdmin` | Returns an administrator's profile by ID. |
+| `inboxeu_get_domain_admin` | `domainName`, `domainAdmin` | Returns the administrator's profile for the specified domain. |
+| `inboxeu_get_mailbox` | `domainName`, `userId` | Returns mailbox metadata. In the Inbox.eu Business control panel, find the internal ID in the URL path `/users/<userId>/…`. Check the returned `id` and `user` before changing the mailbox. |
+| `inboxeu_list_invoices` | `domainName` and optional `limit`, `offset`, `unexpired`, `order_column`, `order_direction` | Returns one page of invoices for the domain. |
+| `inboxeu_check_domain` | `hostName` | `available` indicates whether the domain name is available in the Inbox.eu database. |
+| `inboxeu_check_admin_email` | `email` | `available` indicates whether the email address can be used for an administrator. |
 
-Например, для первой страницы счетов передайте `{"domainName":"example.org","limit":20,"offset":0}`. Для следующей страницы увеличьте `offset` на число полученных записей. Сумма сохраняет исходное строковое представление и сопровождается валютой, если API её вернул.
+To request the first page of invoices, pass `{"domainName":"example.org","limit":20,"offset":0}`. For the next page, increase `offset` by the number of records returned. Each invoice amount retains its original string representation and includes the currency when the API supplies it.
 
-### Дополнительные инструменты режима full
+### Additional tools in full mode
 
-| Инструмент | Вход |
+| Tool | Arguments and behavior |
 | --- | --- |
-| `inboxeu_create_admin` | Обязательные `email` и `language`. Опционально `firstName`, `lastName`, `password`, `euRefId`, `isEmailVerified` и объект `domainName` с `name` и/или `mailboxUsernames`. Если пароль опущен, Inbox.eu отправит сгенерированный пароль по email. Для `isEmailVerified` требуются специальные права. |
-| `inboxeu_update_profile` | Хотя бы одно из полей `firstName`, `lastName`, `language`, `prefs`, `plainPassword`, `tos`. В настройках доступны `itemsPerPage`, `userSortField`, `userSortOrder`. |
-| `inboxeu_invite_admin` | `email`, `user`, `hostname`. Inbox.eu отправит приглашение администратору. |
-| `inboxeu_delete_profile` | Без параметров. Удаляет аккаунт администратора, которому принадлежит API-ключ. |
-| `inboxeu_remove_domain_admin` | `domainName`, `domainAdmin`. Отзывает доступ администратора к одному домену. |
-| `inboxeu_enable_2fa`, `inboxeu_disable_2fa` | Без параметров. Меняют настройку текущего администратора. При включении MCP возвращает полученные от API данные для регистрации в приложении-аутентификаторе. |
-| `inboxeu_create_mailboxes` | `domainName`, `body` — массив объектов `ApiMailUser`. В `summary.succeeded` и `summary.failed` указано, сколько ящиков создано и сколько запросов отклонено. Для отклонённой записи поле `message` поясняет причину, в том числе достижение лимита ящиков, если Inbox.eu сообщил об этом. |
-| `inboxeu_update_mailbox` | `domainName`, `userId`, `body` — объект `ApiMailUser`. Для изменения имени и фамилии ящика Inbox.eu принимает поля `forename` и `surname`. |
-| `inboxeu_delete_mailbox` | `domainName`, `userId`. Удаляет указанный ящик. |
-| `inboxeu_send_mailbox_details` | `domainName`, `userId`, `body` — объект `MailUserDetails`. Запрашивает у Inbox.eu отправку письма со сведениями о ящике. |
-| `inboxeu_update_mailbox_filters` | `domainName`, `userId`. Документация описывает PUT-запрос только с этими параметрами. |
-| `inboxeu_create_impersonation_token` | `domainName`, `userId`, `body` — объект `ApiMailUser`. Возвращает полученный токен для входа в указанный ящик. |
-| `inboxeu_validate_impersonation_token` | Те же параметры и строка `impersonationToken`. Если действительность токена определить не удалось, сервер возвращает `valid: null` и пояснение в поле `message`. |
+| `inboxeu_create_admin` | Requires `email` and `language`. Optional fields are `firstName`, `lastName`, `password`, `euRefId`, `isEmailVerified`, and a `domainName` object containing `name`, `mailboxUsernames`, or both. If you omit `password`, Inbox.eu emails a generated password. Setting `isEmailVerified` requires special permissions. |
+| `inboxeu_update_profile` | Supply at least one of `firstName`, `lastName`, `language`, `prefs`, `plainPassword`, or `tos`. The `prefs` object supports `itemsPerPage`, `userSortField`, and `userSortOrder`. |
+| `inboxeu_invite_admin` | `email`, `user`, `hostname`. Inbox.eu emails an invitation to the administrator. |
+| `inboxeu_delete_profile` | Takes no arguments. Deletes the administrator account that owns the API key. |
+| `inboxeu_remove_domain_admin` | `domainName`, `domainAdmin`. Revokes the administrator's access to that domain. |
+| `inboxeu_enable_2fa`, `inboxeu_disable_2fa` | Both take no arguments and change two-factor authentication for the current administrator. When you enable it, the server returns the enrollment data supplied by Inbox.eu for use in an authenticator app. |
+| `inboxeu_create_mailboxes` | `domainName` and a `body` array of `ApiMailUser` objects. `summary.succeeded` counts created mailboxes and `summary.failed` counts rejected entries. Each rejected entry includes a `message` with the reason, including a mailbox limit when Inbox.eu reports one. |
+| `inboxeu_update_mailbox` | `domainName`, `userId`, and an `ApiMailUser` object as `body`. Use `forename` and `surname` to change the mailbox user's first and last names. |
+| `inboxeu_delete_mailbox` | `domainName`, `userId`. Deletes the specified mailbox. |
+| `inboxeu_send_mailbox_details` | `domainName`, `userId`, and a `MailUserDetails` object as `body`. Asks Inbox.eu to email the mailbox details. |
+| `inboxeu_update_mailbox_filters` | `domainName`, `userId`. These are the only parameters documented for the PUT request. |
+| `inboxeu_create_impersonation_token` | `domainName`, `userId`, and an `ApiMailUser` object as `body`. Returns a sign-in token for the specified mailbox. |
+| `inboxeu_validate_impersonation_token` | `domainName`, `userId`, an `ApiMailUser` object as `body`, and the `impersonationToken` string. If the server cannot determine whether the token is valid, it returns `valid: null` and an explanation in `message`. |
 
-Типы и допустимые значения доступны через `tools/list`. Для `ApiMailUser` и `MailUserDetails` провайдер публикует тип «объект» без списка полей. MCP передаёт предоставленный JSON в теле соответствующего запроса. Для изменения фильтров схема тела не опубликована. Семь дополнительных записей для `/domain_admins/{domainAdmin}` содержат только пустой ответ `default` без описания назначения и результата. [Контракт Inbox.eu](https://api.inbox.eu/api/v1/doc.json)
+Use `tools/list` to inspect argument types and allowed values. Inbox.eu defines `ApiMailUser` and `MailUserDetails` as objects and leaves their fields unspecified. The MCP server sends the supplied JSON as the request body. The mailbox filter update has no published body schema. Seven additional entries for `/domain_admins/{domainAdmin}` contain only an empty `default` response and give no description of their purpose or result. [Inbox.eu OpenAPI specification](https://api.inbox.eu/api/v1/doc.json)
 
-### Какие письма можно отправить
+### Which emails can I send?
 
-HTTPS API поддерживает приглашение администратора и отправку сведений о созданном или изменённом ящике. Отправка обычного письма с произвольными адресатами, темой и текстом в опубликованном HTTPS API v1 отсутствует. [Документация Inbox.eu](https://api.inbox.eu/api/v1/doc/)
+The published Inbox.eu HTTPS API v1 supports two kinds of email. You can invite an administrator or send account details for a newly created or updated mailbox. The API has no endpoint for sending ordinary email with a recipient, subject, and body of your choice. [Inbox.eu API documentation](https://api.inbox.eu/api/v1/doc/)
 
-## Ответы и диагностика
+## Responses and troubleshooting
 
-- Сервер отправляет ключ в заголовке `Authorization: Bearer`. Адрес API фиксирован. Переадресация отключена, в том числе на HTTP. При отключённой в Node.js проверке TLS-сертификатов сервер отклоняет запрос до отправки.
-- При сбое вызова MCP возвращает `isError: true` и короткое пояснение на английском. Если сервис отклонил ключ, проверьте `INBOXEU_API_KEY`. Если для операции недостаточно прав, проверьте доступ администратора к домену. При ограничении частоты запросов повторите попытку позже.
-- При проверке домена и адреса администратора поле `available` показывает, свободно ли имя. Если сервис отклонил проверку адреса, инструмент вернёт ошибку. [Описание методов](https://api.inbox.eu/api/v1/doc/)
-- При чтении профилей, счетов и статуса двухфакторной аутентификации сервер исключает ключи, пароли и секреты. Данные настройки двухфакторной аутентификации и токен входа возвращаются клиенту при явном вызове соответствующего инструмента в режиме `full`.
-- Один вызов отправляет один запрос. Тайм-аут — 15 секунд, предел тела ответа — 1 МиБ. Если соединение оборвалось после отправки записи, проверьте её результат в панели Inbox.eu перед ручным повтором. Для большого списка счетов уменьшите `limit`.
-- Результат операции доступен в `structuredContent`. Для отказа или неподтверждённого изменения текстовый блок `content` содержит короткое пояснение, для частично выполненного пакета — сводку. Результаты отдельных ящиков остаются в `structuredContent.data`.
+- The server sends the key in the `Authorization: Bearer` header to a fixed API address. It blocks all redirects, including redirects to HTTP. If TLS certificate verification is disabled in Node.js, the server rejects the request before sending it.
+- When a tool call fails, the server returns `isError: true` and a short explanation in English. For example, an authentication error reads `Inbox.eu did not accept the API key for this operation.` Check `INBOXEU_API_KEY` if you see that message. If the operation requires more permissions, check the administrator's access to the domain. If you hit a rate limit, try again later.
+- For domain and administrator email checks, `available` indicates whether the domain name or email address is available. If Inbox.eu rejects the email check, the tool returns an error. [Inbox.eu API documentation](https://api.inbox.eu/api/v1/doc/)
+- When reading profiles, invoices, and two-factor authentication status, the server filters out keys, passwords, and secrets. To retrieve authenticator enrollment data or a mailbox sign-in token, explicitly call the corresponding tool in `full` mode.
+- Each tool call sends at most one API request. The timeout is 15 seconds and the maximum response body size is 1 MiB. If the connection drops after a write request is sent, check the result in the Inbox.eu control panel before retrying. For large invoice lists, reduce `limit`.
+- The operation result is available in `structuredContent`. The `content` text block gives a short explanation when an operation is rejected or a change is unconfirmed. For a partially completed batch, it gives a summary. Individual mailbox results are available in `structuredContent.data`.
