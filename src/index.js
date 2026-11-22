@@ -2,6 +2,8 @@ import { McpServer, fromJsonSchema } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { createClient, InboxEuError } from "./client.js";
 import { readAdmin } from "./admin.js";
+import { listDomains, listMailboxPage } from "./directory.js";
+import { resolveReadTarget } from "./read-target.js";
 import { ConfigError, loadConfig } from "./config.js";
 import { InputError, operations } from "./operations.js";
 import { projectResult } from "./results.js";
@@ -46,8 +48,25 @@ function toolInputSchema(schema, defaults, optional) {
   };
 }
 
+async function executeOperation(request, operation, args, defaultDomain, signal) {
+  if (operation.name === "inboxeu_list_domains") return listDomains(request, signal);
+  if (operation.name === "inboxeu_list_mailboxes") return listMailboxPage(request, args, signal);
+  const response = operation.name === "inboxeu_get_admin"
+    ? await readAdmin(request, { domainAdmin: args.domainAdmin, domainName: defaultDomain }, signal)
+    : await request({ ...operation.build(args), method: operation.method, signal });
+  const requestedCount = operation.name === "inboxeu_create_mailboxes" ? args.body.length : undefined;
+  const { domainName, userId, mailboxEmail } = args;
+  return projectResult(operation.name, response, { domainName, userId, mailboxEmail, requestedCount });
+}
+
 function createServer({ mode, readApiKey, toolDefaults, domains, mailboxAddresses }, clarification) {
-  const server = new McpServer({ name: "inboxeu-mcp", version: "1.0.0" }, clarification.serverOptions);
+  const server = new McpServer({ name: "inboxeu-mcp", version: "1.0.0" }, {
+    ...clarification.serverOptions,
+    instructions: "For mailbox questions, use inboxeu_get_mailbox with the full mailboxEmail. It discovers the ID. " +
+      "For a list across all domains, call inboxeu_list_domains and then inboxeu_list_mailboxes per domain. " +
+      "Follow nextOffset until it is null when a complete list is requested. Use inboxeu_get_profile for the current administrator. " +
+      "Ask which account the user means when several match. Use verified IDs for authorized changes in full mode.",
+  });
   for (const operation of operations) {
     const readOnly = operation.method === "GET";
     if (!readOnly && mode !== "full") continue;
@@ -64,40 +83,28 @@ function createServer({ mode, readApiKey, toolDefaults, domains, mailboxAddresse
         openWorldHint: true,
       },
     }, async (args, ctx) => {
-      let apiKey;
-      let params;
-      let resolvedArgs;
       try {
-        apiKey = readApiKey();
-        const answers = clarification.priorAnswers(ctx, operation.name, args);
-        const { values, missing } = resolve(args, answers);
-        if (missing) {
-          return await clarification.askTarget({ server, ctx, operationName: operation.name, args, answers, missing });
-        }
-        const checked = await fullSchema.validate(values);
-        if (checked.issues?.length) throw new InputError(invalidParameters);
-        resolvedArgs = checked.value;
-        params = operation.build(resolvedArgs);
-      } catch (error) {
-        return toolError(error instanceof InputError || error instanceof ConfigError ? error.message : invalidParameters);
-      }
-      try {
-        const request = createClient({ apiKey });
+        const request = createClient({ apiKey: readApiKey() });
         const signal = ctx.mcpReq.signal;
-        const response = operation.name === "inboxeu_get_admin"
-          ? await readAdmin(request, {
-            domainAdmin: resolvedArgs.domainAdmin, domainName: toolDefaults.inboxeu_get_domain_admin?.domainName,
-          }, signal)
-          : await request({ ...params, method: operation.method, signal });
-        const requestedCount = operation.name === "inboxeu_create_mailboxes" ? params.body.length : undefined;
-        const { domainName, userId, mailboxEmail } = resolvedArgs;
-        const result = projectResult(operation.name, response, { domainName, userId, mailboxEmail, requestedCount });
+        const answers = clarification.priorAnswers(ctx, operation.name, args);
+        const target = readOnly
+          ? await resolveReadTarget(resolve, args, answers, request, signal)
+          : resolve(args, answers);
+        if (target.missing) {
+          return await clarification.askTarget({
+            server, ctx, operationName: operation.name, args, answers: target.answers ?? answers, missing: target.missing,
+          });
+        }
+        const checked = await fullSchema.validate(target.values);
+        if (checked.issues?.length) throw new InputError(invalidParameters);
+        const result = await executeOperation(request, operation, checked.value, toolDefaults.inboxeu_get_domain_admin?.domainName, signal);
         return {
           structuredContent: result,
           content: [{ type: "text", text: resultText(result) }],
         };
       } catch (error) {
-        return toolError(error instanceof InboxEuError ? error.message : "Internal Inbox.eu MCP error.");
+        const expected = error instanceof InboxEuError || error instanceof InputError || error instanceof ConfigError;
+        return toolError(expected ? error.message : "Internal Inbox.eu MCP error.");
       }
     });
   }

@@ -41,8 +41,18 @@ test("every described OpenAPI operation has one tool with the corresponding HTTP
     Object.entries(methods).filter(([, endpoint]) => endpoint.summary)
       .map(([method]) => method.toUpperCase() + " " + path));
   assert.equal(byName.size, operations.length);
-  assert.deepEqual(sorted(operations.map(op => op.method + " " + op.path)), sorted(documented));
-  for (const op of operations) {
+  // Both directory routes were verified against the live API but are absent from the bundled spec.
+  const directoryPaths = {
+    inboxeu_list_mailboxes: "/api/v1/domains/{domainName}/mail_users/",
+    inboxeu_list_domains: "/api/v1/domains/",
+  };
+  for (const [name, path] of Object.entries(directoryPaths)) {
+    assert.equal(byName.get(name).method, "GET");
+    assert.equal(byName.get(name).path, path);
+  }
+  const published = operations.filter(op => !Object.hasOwn(directoryPaths, op.name));
+  assert.deepEqual(sorted(published.map(op => op.method + " " + op.path)), sorted(documented));
+  for (const op of published) {
     const endpoint = spec.paths[op.path][op.method.toLowerCase()];
     const params = endpoint.parameters ?? [];
     const body = endpoint.requestBody?.content["application/json"].schema;
@@ -87,6 +97,9 @@ test("wire requests retain documented paths, encoded IDs, queries and JSON bodie
       { path: "/api/v1/domains/xn--bcher-kva.example/domain_admins/Admin%2B1%40example.org" }],
     ["inboxeu_get_mailbox", { domainName: "EXAMPLE.org", userId: "12?name#x", mailboxEmail: "sales@example.org" },
       { path: "/api/v1/domains/example.org/mail_users/12%3Fname%23x" }],
+    ["inboxeu_list_domains", {}, { path: "/api/v1/domains/" }],
+    ["inboxeu_list_mailboxes", { domainName: "EXAMPLE.org", limit: 100, offset: 10 },
+      { path: "/api/v1/domains/example.org/mail_users/", query: { limit: 100, offset: 10 } }],
     ["inboxeu_list_invoices", { domainName: "example.org", ...query },
       { path: "/api/v1/domains/example.org/transactions/", query }],
     ["inboxeu_check_domain", { hostName: "example.org." }, { path: "/api/v1/domain_find/example.org" }],
@@ -127,6 +140,11 @@ test("wire requests retain documented paths, encoded IDs, queries and JSON bodie
 test("tool schemas reject unknown fields, incorrect paging types and malformed request bodies", async () => {
   const cases = [
     ["inboxeu_check_auth", { token: "x" }],
+    ["inboxeu_list_domains", { domainName: "other.example" }],
+    ["inboxeu_list_mailboxes", { domainName: "example.org", limit: 0 }],
+    ["inboxeu_list_mailboxes", { domainName: "example.org", limit: 101 }],
+    ["inboxeu_list_mailboxes", { domainName: "example.org", offset: -1 }],
+    ["inboxeu_list_mailboxes", { domainName: "example.org", offset: 0.5 }],
     ["inboxeu_list_invoices", { domainName: "example.org", limit: -1 }],
     ["inboxeu_list_invoices", { domainName: "example.org", offset: 0.5 }],
     ["inboxeu_list_invoices", { domainName: "example.org", unexpired: false }],

@@ -21,17 +21,16 @@ export function toolArguments(schema, defaults, domains, mailboxAddresses = new 
   }
 
   function resolve(input, answers = {}) {
-    const args = { ...input };
-    // Earlier ChatGPT tool catalogs only have userId. Normalize before applying a form reply.
-    if (fields.mailboxEmail && typeof args.userId === "string" && args.userId.includes("@")) {
-      const address = emailAddress(args.userId);
-      if (args.mailboxEmail !== undefined && emailAddress(args.mailboxEmail) !== address) {
+    const supplied = { ...answers, ...input };
+    // Accept an address in the userId field from earlier catalogs and interactive forms.
+    if (fields.mailboxEmail && typeof supplied.userId === "string" && supplied.userId.includes("@")) {
+      const address = emailAddress(supplied.userId);
+      if (supplied.mailboxEmail !== undefined && emailAddress(supplied.mailboxEmail) !== address) {
         throw new InputError("Supply a single mailbox address for this lookup.");
       }
-      args.mailboxEmail = address;
-      delete args.userId;
+      supplied.mailboxEmail = address;
+      delete supplied.userId;
     }
-    const supplied = { ...answers, ...args };
     if (fields.mailboxEmail && supplied.mailboxEmail !== undefined) {
       const address = emailAddress(supplied.mailboxEmail);
       const domain = address.split("@")[1];
@@ -44,13 +43,9 @@ export function toolArguments(schema, defaults, domains, mailboxAddresses = new 
         throw new InputError("The mailbox ID conflicts with its address in INBOXEU_DOMAINS. Check the mapping.");
       }
       const id = explicitId ?? knownId;
-      if (id === undefined) {
-        return { missing: {
-          field: "userId",
-          message: `What is the internal mailbox ID for ${address}? Find it under Users in the Inbox.eu Business panel (/users/<ID>/). Retry with mailboxEmail and userId.`,
-        } };
-      }
-      return { values: { domainName: domain, userId: validateMailboxId(id), mailboxEmail: address } };
+      const values = { domainName: domain, mailboxEmail: address };
+      if (id !== undefined) values.userId = validateMailboxId(id);
+      return { values };
     }
     return resolveDefaults(supplied);
   }
@@ -73,6 +68,7 @@ export function toolArguments(schema, defaults, domains, mailboxAddresses = new 
       if (userId === undefined) {
         return { missing: {
           field: "userId",
+          domainName: domain,
           message: `Which mailbox ID should this operation use in ${domain}?`,
           choices: domains.get(domain) ?? [],
         } };

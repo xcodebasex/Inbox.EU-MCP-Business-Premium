@@ -2,7 +2,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import {
   CLIENT_CAPABILITIES_META_KEY, createRequestStateCodec, inputRequired, inputResponse,
 } from "@modelcontextprotocol/server";
-import { dnsName, InputError, validateIdentifier } from "./operations.js";
+import { dnsName, emailAddress, InputError, validateIdentifier } from "./operations.js";
 
 const targetFields = new Set(["domainName", "hostName", "hostname", "userId"]);
 const invalidReply = "The clarification reply could not be used. Retry the tool with the target argument.";
@@ -49,7 +49,11 @@ export function createClarification() {
     if (!content || !Object.hasOwn(content, field) || Object.keys(content).length !== 1) {
       throw new InputError(invalidReply);
     }
-    const value = field === "userId" ? validateIdentifier(content[field]) : dnsName(content[field]);
+    const answer = content[field];
+    const isMailboxAddress = operationName === "inboxeu_get_mailbox" && field === "userId" &&
+      typeof answer === "string" && answer.includes("@");
+    const validate = isMailboxAddress ? emailAddress : field === "userId" ? validateIdentifier : dnsName;
+    const value = validate(answer);
     return { ...answers, [field]: value };
   }
 
@@ -57,11 +61,12 @@ export function createClarification() {
     const { field, message, choices } = missing;
     if (!targetFields.has(field)) throw new InputError(invalidReply);
     const suggestions = choices?.slice(0, 5).filter(choice => choice.length <= 100);
-    const hint = suggestions?.length ? `Configured choices include ${suggestions.join(", ")}.` : "";
+    const hint = suggestions?.length ? `${missing.fromDirectory ? "Available domains" : "Configured choices"} include ${suggestions.join(", ")}.` : "";
     if (!supportsForms(server, ctx)) {
       throw new InputError([message, hint, `Ask the user and retry with their answer in ${field}.`].filter(Boolean).join(" "));
     }
-    const property = { type: "string", title: field === "userId" ? "Mailbox ID" : "Domain", minLength: 1 };
+    const mailboxTitle = operationName === "inboxeu_get_mailbox" ? "Mailbox ID or email address" : "Mailbox ID";
+    const property = { type: "string", title: field === "userId" ? mailboxTitle : "Domain", minLength: 1 };
     if (hint) property.description = hint;
     const requestState = await codec.mint({ field, answers, binding: argumentBinding(operationName, args) });
     return inputRequired({

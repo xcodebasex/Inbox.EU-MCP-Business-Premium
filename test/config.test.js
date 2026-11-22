@@ -111,10 +111,12 @@ test("tool defaults come from the file, and invalid JSON identifies only the var
   const file = await makeEnvFile(t);
   const argv = ["--env-file", file];
   setProcessSettings(t, { INBOXEU_DOMAIN_NAME: "env.example", INBOXEU_USER_ID: "42", INBOXEU_LIST_INVOICES_LIMIT: "9" });
-  await writeFile(file, "INBOXEU_DOMAIN_NAME=file.example\nINBOXEU_USER_ID=\nINBOXEU_LIST_INVOICES_OFFSET=0\n");
+  await writeFile(file, "INBOXEU_DOMAIN_NAME=file.example\nINBOXEU_USER_ID=\nINBOXEU_LIST_INVOICES_OFFSET=0\n" +
+    "INBOXEU_LIST_MAILBOXES_LIMIT=2\nINBOXEU_LIST_MAILBOXES_OFFSET=4\n");
   const { toolDefaults } = loadConfig(argv);
   assert.deepEqual(toolDefaults.inboxeu_get_mailbox, { domainName: "file.example" });
   assert.deepEqual(toolDefaults.inboxeu_list_invoices, { domainName: "file.example", offset: 0 });
+  assert.deepEqual(toolDefaults.inboxeu_list_mailboxes, { domainName: "file.example", limit: 2, offset: 4 });
   for (const body of ["private-invalid-json", "null", "[]"]) {
     await writeFile(file, `INBOXEU_UPDATE_MAILBOX_BODY=${body}\n`);
     assert.doesNotThrow(() => loadConfig(argv));

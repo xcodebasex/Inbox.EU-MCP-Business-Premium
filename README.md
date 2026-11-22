@@ -2,7 +2,7 @@
 
 [Russian-language guide](./README.ru.md)
 
-Use this local Model Context Protocol (MCP) server to manage Inbox.eu Business Premium domains and mailboxes. It starts in `read-only` mode with nine tools for checking access and looking up administrators, mailboxes, and invoices. Switch to `full` to enable all 23 tools, including mailbox updates, account deletion, and email invitations. Your Inbox.eu API key determines which operations the service allows.
+Use this local Model Context Protocol (MCP) server to manage Inbox.eu Business Premium domains and mailboxes. It starts in `read-only` mode with eleven tools for checking access and looking up administrators, mailboxes, and invoices. Switch to `full` to enable all 25 tools, including mailbox updates, account deletion, and email invitations. Your Inbox.eu API key determines which operations the service allows.
 
 The server requires **Node.js 22 or later**. Your MCP client starts it as a local process and communicates over `stdio`. The server sends API requests over HTTPS to `https://api.inbox.eu` and verifies the TLS certificate.
 
@@ -48,7 +48,7 @@ The contract tests use version 1.0.0 of the Inbox.eu API specification, saved on
    INBOXEU_MODE=read-only
    ```
 
-   To look up accounts by email address, add your mailboxes to the same file. [Look up a mailbox by email address](#look-up-a-mailbox-by-email-address)
+   A configured API key can look up a mailbox by its full address. [Look up a mailbox by email address](#look-up-a-mailbox-by-email-address)
 
 4. Start the server from the project directory.
 
@@ -70,7 +70,7 @@ In Windows PowerShell, you can use `npm.cmd run plugin:desktop`.
 
 1. Restart ChatGPT Desktop and open the project folder in **Work** mode.
 2. Open **Plugins**, choose **Inbox.eu Local** from the marketplace selector, and install **Inbox.eu Business**. [OpenAI’s local marketplace guide](https://developers.openai.com/plugins/build/plugins#install-a-local-plugin-manually)
-3. In a new local **Work** chat in the project, type `@Inbox.eu` and select **Inbox.eu Business** under **Plugins**. Ask “Call `inboxeu_check_auth` with `{}`.” A valid key returns `{"authenticated":true}`. To check the installation before adding a key, ask for the list of Inbox.eu tools. The default `read-only` mode exposes nine. [Selecting a plugin in Work](https://learn.chatgpt.com/docs/build-plugins#using-a-plugin)
+3. In a new local **Work** chat in the project, type `@Inbox.eu` and select **Inbox.eu Business** under **Plugins**. Ask “Call `inboxeu_check_auth` with `{}`.” A valid key returns `{"authenticated":true}`. To check the installation before adding a key, ask for the list of Inbox.eu tools. The default `read-only` mode exposes eleven. [Selecting a plugin in Work](https://learn.chatgpt.com/docs/build-plugins#using-a-plugin)
 
 The plugin runs `node` from your system PATH and launches the existing `src/index.js`. The server reads the original `.env` beside `package.json`. Tool results returned to ChatGPT can include mailbox data. If you move the project, rerun the preparation command from its new folder and reinstall the plugin. If ChatGPT cannot find Node.js, add it to your PATH and restart the desktop app.
 
@@ -83,6 +83,8 @@ git pull --ff-only
 npm ci --ignore-scripts
 npm run plugin:desktop
 ```
+
+If you use an existing ChatGPT connection through a Secure MCP Tunnel, restart the tunnel client that launches this server. In the plugin settings in ChatGPT, select **Refresh tools**. Confirm that `inboxeu_list_mailboxes` appears in the read tools.
 
 If you installed from a ZIP, extract the new version, place your existing `.env` beside its `package.json`, and run the two npm commands above in that folder.
 
@@ -107,7 +109,7 @@ In a client that supports local MCP servers, add a server named `inboxeu`, choos
 
 On Windows, a path such as `C:/Projects/Inbox.EU-MCP-Business-Premium/src/index.js` works. If your client cannot find `node`, use the absolute path to the executable. You can find it with `(Get-Command node).Source` in PowerShell or `command -v node` on macOS and Linux.
 
-Restart the connection and open the client's tool list (`tools/list`). In `read-only` mode you should see nine tools, even before adding a key. To verify the key itself, call `inboxeu_check_auth` with `{}`. A valid key returns `{"authenticated":true}`.
+Restart the connection and open the client's tool list (`tools/list`). In `read-only` mode you should see eleven tools, even before adding a key. To verify the key itself, call `inboxeu_check_auth` with `{}`. A valid key returns `{"authenticated":true}`.
 
 All `INBOXEU_*` settings come from one file. The default is `.env` beside `package.json`, regardless of the client's working directory. To keep it elsewhere, pass the absolute path with `--env-file`.
 
@@ -119,8 +121,8 @@ Set `INBOXEU_MODE` in `.env` and restart the server after a change.
 
 | Mode | Tools available |
 | --- | --- |
-| `read-only` (default) | Nine read tools. The server rejects a direct call to a write tool before contacting Inbox.eu. |
-| `full` | All 23 tools. Write operations still require the corresponding permissions in Inbox.eu. |
+| `read-only` (default) | Eleven read tools. The server rejects a direct call to a write tool before contacting Inbox.eu. |
+| `full` | All 25 tools. Write operations still require the corresponding permissions in Inbox.eu. |
 
 To pin a launch to read-only mode and select a private configuration file, run the following command from the project directory, using the path to your file. In a client configuration, append the same options and values to the arguments array as separate strings.
 
@@ -132,25 +134,25 @@ node src/index.js --env-file "/absolute/path/to/private/.env" --mode read-only
 
 ## Look up a mailbox by email address
 
-Inbox.eu's Business API retrieves a mailbox by its domain and internal ID. Save the address-to-ID mapping once in `.env` to use the full email address in subsequent lookups. One administrator API key covers the domains and mailboxes that key can access.
+Set `INBOXEU_API_KEY` in the local `.env` beside `package.json` and start the server in `read-only` mode. In ChatGPT, select **Inbox.eu Business** and ask “What is the account status of info@example.org?” Replace the sample address with an address on a domain your administrator key can read. In another MCP client, call `inboxeu_get_mailbox` with these arguments.
 
-1. **Find the mailbox ID.** In the Inbox.eu Business control panel, select the domain, open **Mailboxes**, and find the row for the exact address. Its edit link contains the ID. For example, if the edit link for `info@example.org` ends in `/users/00123/edit`, its ID is `00123`.
+```json
+{"mailboxEmail":"info@example.org"}
+```
 
-2. **Edit the existing `INBOXEU_DOMAINS=` line** in the local `.env` beside `package.json`, or in the file selected with `--env-file`. Keep all domains on that one line. Under each domain, use the part before `@` as the mailbox name and put each ID in double quotes to preserve leading zeros. Replace these example domains, names, and IDs with your own.
+The server takes the domain from the address, reads its mailbox directory over HTTPS, and finds the matching internal ID. It then fetches the account and verifies the identity before returning `data.email` and `data.id`. If the directory contains no matching address, the tool reports that outcome. An API access error leaves the mailbox status unconfirmed. Discovery happens on demand within that domain. The server does not save the discovered directory to disk.
 
-   ```dotenv
-   INBOXEU_DOMAINS='{"example.org":{"info":"00123","sales":"00456"},"example.net":{"office":"00789"}}'
-   ```
+To see which domains the key can manage, ask “List my Inbox.eu domains”, or call `inboxeu_list_domains` with `{}`. Its `domains` array contains just the domain names.
 
-   For a single domain, keep just its entry. You can leave `INBOXEU_DOMAIN_NAME` and `INBOXEU_USER_ID` empty for address lookups.
+To list the addresses and IDs in a domain, ask “List the mailboxes and user IDs in example.org”, or call `inboxeu_list_mailboxes` with `{"domainName":"example.org"}`. Each item in `data` contains `email`, `userId` as a string, and `status` when supplied by Inbox.eu. Results include `total`, `offset`, and `nextOffset`. To request another page, pass the returned `nextOffset` as `offset`. The default page size is 100 and the `limit` range is 1–100. Set `INBOXEU_DOMAIN_NAME=example.org` in `.env` to make the domain optional when listing. With no domain settings, the server can discover the authorized domains. It selects a sole domain and asks you to choose when several are available. If you request a mailbox using only its domain, it uses an applicable local mailbox selection first. Otherwise it reads the mailbox directory, selects a sole entry, or asks which address and ID you want. An empty directory yields an empty-list message.
 
-3. **Restart and verify.** Save the file and restart the MCP server your client uses. If you use a Secure MCP Tunnel that launches this server, restart that tunnel client. In ChatGPT, select **Inbox.eu Business** and ask “What is the account status of info@example.org?” In another MCP client, call `inboxeu_get_mailbox` with the following arguments.
+**Using a known ID.** If your key can read an individual account but the domain directory is unavailable, pass both values, for example `{"mailboxEmail":"info@example.org","userId":"00123"}`. You can also keep selected IDs in `INBOXEU_DOMAINS`. Under each domain, map the part before `@` to the ID from the account’s edit link in the Business control panel (`/users/<ID>/edit`). Keep IDs in quotes to preserve leading zeros.
 
-   ```json
-   {"mailboxEmail":"info@example.org"}
-   ```
+```dotenv
+INBOXEU_DOMAINS='{"example.org":{"info":"00123","sales":"00456"},"example.net":{"office":"00789"}}'
+```
 
-   A successful result includes the verified address in `data.email` and the internal ID in `data.id`. If the address has no mapping, the server asks for its ID. You can also supply both values for a one-time lookup, for example `{"mailboxEmail":"info@example.org","userId":"00123"}`. If Inbox.eu returns a different mailbox, check the edit link, correct the mapping, and restart the server. Older clients can pass the full address in `userId` for this read tool.
+An explicit or configured ID skips directory discovery. The same address check applies to the returned account. Restart the server after editing `INBOXEU_DOMAINS`. Older clients can pass the full address in `userId` for this read tool.
 
 ## Setting tool arguments in `.env`
 
@@ -175,7 +177,7 @@ INBOXEU_CREATE_MAILBOXES_BODY='[{"user":"office"}]'
 
 A tool argument overrides the entire corresponding field, including a whole object or array. For example, calling `inboxeu_list_invoices` with `{"limit":5}` overrides the limit and keeps the domain from `.env`. The server skips empty settings in `.env`. Restart the MCP server after editing these argument defaults.
 
-The server prompts only for a required domain (`domainName`, `hostName`, or `hostname`) or mailbox ID (`userId`) that you omitted from the call and that it cannot determine unambiguously from `.env`. If it needs both, it asks for the domain first. It then asks for the ID only if the mailbox still needs to be selected. Supply other required arguments in the call or set them in `.env`.
+For reads on an existing domain, the server uses an explicit domain or the configured selection first. If no domains are configured, it can retrieve the domain list using your API key. When several candidates remain, it asks which domain to use. A domain availability check can target any hostname, so supply the hostname or answer the prompt. For a write operation, supply the target or configure it in `.env`. The server asks for any domain or mailbox ID it still needs.
 
 If your MCP client supports forms, it prompts you to enter the value and shows suggestions from `.env` when available. If you decline or cancel the form, the server ends the call without contacting Inbox.eu. A client without form support receives a question in English. After you answer, the client needs to repeat the call with the requested argument. The server validates the resulting arguments before contacting the API.
 
@@ -189,7 +191,7 @@ If one API key gives you access to several domains, enter it once in `INBOXEU_AP
 INBOXEU_DOMAINS='["example.org","example.net"]'
 ```
 
-To store internal IDs by domain, you can also use arrays of IDs. To look up accounts by name, use the [address mapping format](#look-up-a-mailbox-by-email-address).
+To store internal IDs by domain, you can also use arrays of IDs. For queries by email address, the server can discover mailbox IDs from Inbox.eu. [Look up a mailbox by email address](#look-up-a-mailbox-by-email-address)
 
 ```dotenv
 INBOXEU_DOMAINS='{"example.org":["00123","00456"],"example.net":["00789"]}'
@@ -224,7 +226,7 @@ Inbox.eu publishes only the object type for both schemas. To get the field names
 
 ## Tools
 
-The nine read tools call the Inbox.eu Business administration API over HTTPS. A successful mailbox lookup confirms that Inbox.eu returned the account. Reading folders or messages and testing mail delivery are outside the scope of this API. [Inbox.eu OpenAPI specification](https://api.inbox.eu/api/v1/doc.json)
+The eleven read tools call the Inbox.eu Business administration API over HTTPS. The provider describes domain and mailbox listing in its Business API overview. The live API serves the domain list at `GET /api/v1/domains/` and the paged mailbox list at `GET /api/v1/domains/{domainName}/mail_users/`. The published OpenAPI file currently omits these routes. [Inbox.eu Business API overview](https://www.inbox.eu/en/inbox-eu-api/) A successful mailbox lookup confirms that Inbox.eu returned the account. Reading folders or messages and testing mail delivery are outside the scope of this API. [Inbox.eu OpenAPI specification](https://api.inbox.eu/api/v1/doc.json)
 
 | Tool | Arguments | Result |
 | --- | --- | --- |
@@ -233,7 +235,9 @@ The nine read tools call the Inbox.eu Business administration API over HTTPS. A 
 | `inboxeu_get_2fa_status` | None | Returns the `isEnabled` flag for two-factor authentication. |
 | `inboxeu_get_admin` | `domainAdmin` | Returns an administrator's profile by ID. If Inbox.eu denies the global lookup, the tool checks the configured default or sole domain. Without a default domain it checks the current profile. Either fallback must return the requested ID. |
 | `inboxeu_get_domain_admin` | `domainName`, `domainAdmin` | Returns the administrator's profile for the specified domain. |
-| `inboxeu_get_mailbox` | `domainName` and `userId`, or `mailboxEmail` with a mapped or supplied ID | Returns administrative details for one mailbox. With an email address, the tool verifies the identity in the response. |
+| `inboxeu_list_domains` | None | Returns the names of domains the API key can access in `domains`. |
+| `inboxeu_list_mailboxes` | `domainName`, optional `limit` and `offset` | Lists mailbox addresses and internal IDs in the selected domain, with pagination. |
+| `inboxeu_get_mailbox` | `mailboxEmail`, or `domainName` and `userId` | Returns administrative details for one mailbox. An address lookup discovers the internal ID when needed and verifies the identity in the response. |
 | `inboxeu_list_invoices` | `domainName` and optional `limit`, `offset`, `unexpired`, `order_column`, `order_direction` | Returns one page of invoices for the domain. |
 | `inboxeu_check_domain` | `hostName` | `available` indicates whether the domain name is available in the Inbox.eu database. |
 | `inboxeu_check_admin_email` | `email` | Checks whether an address is available for **administrator registration**. To check a mailbox account, use `inboxeu_get_mailbox`. |

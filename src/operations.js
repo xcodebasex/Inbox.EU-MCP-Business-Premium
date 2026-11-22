@@ -160,10 +160,18 @@ export const operations = [
     "GET", "/api/v1/domain_admins/{domainAdmin}", { domainAdmin: identifier }),
   route("inboxeu_get_domain_admin", "Get an administrator associated with a particular domain.",
     "GET", adminPath, adminParams),
+  // Inbox.eu serves these collection routes in addition to the published OpenAPI operations.
+  route("inboxeu_list_domains", "List the domain names visible to the configured Inbox.eu API key.",
+    "GET", "/api/v1/domains/"),
+  route("inboxeu_list_mailboxes", "Get a page of mailbox addresses, internal user IDs and statuses for one domain. Use nextOffset to continue.",
+    "GET", "/api/v1/domains/{domainName}/mail_users/", { domainName: hostname }, { query: {
+      limit: { type: "integer", minimum: 1, maximum: 100, description: "Maximum mailboxes per page. Defaults to 100." },
+      offset: { ...pageNumber, description: "Number of mailboxes to skip. Defaults to zero." },
+    } }),
   route("inboxeu_get_mailbox",
-    "Read mailbox account metadata. For a named address, pass its full mailboxEmail. An unmapped address also requires its internal userId. To read by ID alone, use domainName and userId.",
+    "Read mailbox account metadata. Pass mailboxEmail to find its internal ID automatically in the domain directory. You can also supply a known internal userId and domainName.",
     "GET", mailboxPath, mailboxParams, { localFields: { mailboxEmail: {
-      ...email, description: "Full mailbox address to look up locally and verify against the returned account.",
+      ...email, description: "Full mailbox address. The server resolves it and verifies the returned account.",
     } } }),
   route("inboxeu_list_invoices", "List invoices for a domain. Use limit and offset to page through results.",
     "GET", "/api/v1/domains/{domainName}/transactions/", { domainName: hostname }, { query: {

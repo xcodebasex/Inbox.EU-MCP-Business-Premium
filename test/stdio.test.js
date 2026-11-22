@@ -13,7 +13,7 @@ const fixtureKey = "stdio-test-key";
 const readTools = [
   "inboxeu_check_admin_email", "inboxeu_check_auth", "inboxeu_check_domain",
   "inboxeu_get_2fa_status", "inboxeu_get_admin", "inboxeu_get_domain_admin",
-  "inboxeu_get_mailbox", "inboxeu_get_profile", "inboxeu_list_invoices",
+  "inboxeu_get_mailbox", "inboxeu_get_profile", "inboxeu_list_domains", "inboxeu_list_invoices", "inboxeu_list_mailboxes",
 ];
 const writeTools = [
   "inboxeu_create_admin", "inboxeu_invite_admin", "inboxeu_update_profile", "inboxeu_delete_profile",
@@ -273,7 +273,7 @@ test("read tools accept configured arguments, list mailbox targets as optional a
   assert.deepEqual(schema("inboxeu_get_mailbox").required ?? [], []);
   assert.ok(!JSON.stringify(tools).includes(domain));
   for (const [name, args] of [
-    ["inboxeu_get_mailbox", {}],
+    ["inboxeu_get_mailbox", { userId: "invalid/id" }],
     ["inboxeu_get_domain_admin", { domain: "typo.example" }],
     ["inboxeu_list_invoices", { offset: "0" }],
   ]) {
@@ -334,10 +334,6 @@ test("address lookups select the named mailbox across domains and verify its ret
   const mailboxEmail = "Info@BÜCHER.example";
   const canonicalEmail = "Info@xn--bcher-kva.example";
   assert.ok(!JSON.stringify(await client.listTools()).includes(canonicalEmail));
-  const unknown = await call(tool, { mailboxEmail: "unknown@other.example" });
-  assert.equal(unknown.isError, true);
-  assert.match(unknown.content[0].text, /internal mailbox ID.*unknown@other\.example/);
-  assert.ok(!unknown.content[0].text.includes("001"));
   for (const args of [
     { mailboxEmail, userId: "001" }, { mailboxEmail, domainName: "other.example" },
     { mailboxEmail, userId: "another@other.example" },
@@ -361,17 +357,160 @@ test("address lookups select the named mailbox across domains and verify its ret
   ]);
 });
 
-test("a client using the old userId argument can answer an unmapped mailbox address prompt", async t => {
+test("an unmapped address resolves through the live directory in clients with the older userId argument", async t => {
   const { call, requests } = await connectFixture(t, [
+    { body: { data: { data: [{ id: 9, user: "sales" }], count: 2, active_count: 2 } } },
+    { body: { data: { data: [{ id: 17, user: "info" }], count: 2, active_count: 2 } } },
     { body: { data: { id: "17", email: "info@example.org" } } },
-  ], { defaults: { INBOXEU_DOMAIN_NAME: "other.example", INBOXEU_USER_ID: "999" },
-    onElicit: async form => {
-      assert.match(form.message, /info@example\.org/);
-      return { action: "accept", content: { userId: "17" } };
+  ], { defaults: {
+    INBOXEU_DOMAIN_NAME: "other.example", INBOXEU_USER_ID: "999",
+    INBOXEU_LIST_MAILBOXES_LIMIT: "1", INBOXEU_LIST_MAILBOXES_OFFSET: "6",
+  } });
+  assert.equal(resultData(await call("inboxeu_get_mailbox", { userId: "info@example.org" })).data.id, "17");
+  const directory = apiRoot + "/domains/example.org/mail_users/";
+  assert.deepEqual((await requests()).map(req => [req.method, req.url]), [
+    ["GET", directory + "?limit=100&offset=0"], ["GET", directory + "?limit=100&offset=1"], ["GET", directory + "17"],
+  ]);
+});
+
+test("directory reads use the selected domain, expose only safe mailbox fields and return the next offset", async t => {
+  const { call, requests } = await connectFixture(t, [
+    { body: { data: { data: [{ id: 7, user: "sales", status: "open", pop3_password: "hidden" }], count: 2, active_count: 2 } } },
+    { body: { data: { data: [{ id: "009", user: "info", status: "open" }], count: 2, active_count: 2 } } },
+  ], { defaults: { INBOXEU_DOMAINS: '["one.example","two.example"]' } });
+  const tool = "inboxeu_list_mailboxes";
+  const clarify = await call(tool);
+  assert.equal(clarify.isError, true);
+  assert.match(clarify.content[0].text, /domain/i);
+  assert.deepEqual(await requests(), []);
+  const first = resultData(await call(tool, { domainName: "one.example", limit: 1 }));
+  assert.deepEqual(first, {
+    data: [{ userId: "7", email: "sales@one.example", status: "open" }], total: 2, offset: 0, nextOffset: 1,
+  });
+  assert.deepEqual(resultData(await call(tool, { domainName: "one.example", limit: 1, offset: first.nextOffset })), {
+    data: [{ userId: "009", email: "info@one.example", status: "open" }], total: 2, offset: 1, nextOffset: null,
+  });
+  const directory = apiRoot + "/domains/one.example/mail_users/";
+  assert.deepEqual((await requests()).map(req => req.url), [directory + "?limit=1&offset=0", directory + "?limit=1&offset=1"]);
+});
+
+test("a key with one domain and one mailbox can read its account without configured IDs", async t => {
+  const domain = { name: "sole.example", validationToken: "private-token" };
+  const mailbox = { id: 45, user: "office", status: "open" };
+  const { call, requests } = await connectFixture(t, [
+    { body: { data: [domain] } },
+    { body: { data: [domain] } },
+    { body: { data: { data: [mailbox], count: 1, active_count: 1 } } },
+    { body: { data: mailbox } },
+  ]);
+  assert.deepEqual(resultData(await call("inboxeu_list_domains")), { domains: ["sole.example"] });
+  const account = resultData(await call("inboxeu_get_mailbox"));
+  assert.equal(account.data.id, 45);
+  assert.equal(account.data.user, "office");
+  assert.deepEqual((await requests()).map(req => [req.method, req.url]), [
+    ["GET", apiRoot + "/domains/"], ["GET", apiRoot + "/domains/"],
+    ["GET", apiRoot + "/domains/sole.example/mail_users/?limit=2&offset=0"],
+    ["GET", apiRoot + "/domains/sole.example/mail_users/45"],
+  ]);
+});
+
+test("unconfigured ambiguous targets ask which discovered domain or mailbox to use before reading a detail", async t => {
+  const domains = [{ name: "first.example", validationToken: "private-token" }, { name: "second.example" }];
+  const mailboxes = [{ id: 45, user: "info" }, { id: 46, user: "sales" }];
+  const { call, requests } = await connectFixture(t, [
+    { body: { data: domains } }, { body: { data: { data: mailboxes, count: 2, active_count: 2 } } },
+  ]);
+  const domain = await call("inboxeu_list_mailboxes");
+  assert.equal(domain.isError, true);
+  assert.match(domain.content[0].text, /first\.example/);
+  assert.match(domain.content[0].text, /second\.example/);
+  assert.doesNotMatch(JSON.stringify(domain), /private-token/);
+  const mailbox = await call("inboxeu_get_mailbox", { domainName: "first.example" });
+  assert.equal(mailbox.isError, true);
+  assert.match(mailbox.content[0].text, /info@first\.example/);
+  assert.match(mailbox.content[0].text, /sales@first\.example/);
+  assert.match(mailbox.content[0].text, /45/);
+  assert.match(mailbox.content[0].text, /46/);
+  assert.deepEqual((await requests()).map(req => req.url), [
+    apiRoot + "/domains/", apiRoot + "/domains/first.example/mail_users/?limit=2&offset=0",
+  ]);
+});
+
+test("directory access failures leave omitted read targets available for manual selection", async t => {
+  const { call, requests } = await connectFixture(t, [{ status: 403 }, { status: 403 }]);
+  const domain = await call("inboxeu_list_invoices");
+  assert.equal(domain.isError, true);
+  assert.match(domain.content[0].text, /domainName/);
+  const mailbox = await call("inboxeu_get_mailbox", { domainName: "example.org" });
+  assert.equal(mailbox.isError, true);
+  assert.match(mailbox.content[0].text, /userId/);
+  assert.deepEqual((await requests()).map(req => req.url), [
+    apiRoot + "/domains/", apiRoot + "/domains/example.org/mail_users/?limit=2&offset=0",
+  ]);
+});
+
+test("answering a mailbox prompt keeps the sole domain that supplied its choices", async t => {
+  const rows = [{ id: 45, user: "info" }, { id: 46, user: "sales" }];
+  const { call, requests } = await connectFixture(t, [
+    { body: { data: [{ name: "team.example" }] } },
+    { body: { data: { data: rows, count: 2, active_count: 2 } } },
+    { body: { data: rows[1] } },
+  ], {
+    mode: { pin: "2026-07-28" },
+    onElicit: form => {
+      assertTargetForm(form, "userId");
+      return { action: "accept", content: { userId: "46" } };
     },
   });
-  assert.equal(resultData(await call("inboxeu_get_mailbox", { userId: "info@example.org" })).data.id, "17");
-  assert.deepEqual((await requests()).map(req => req.url), [apiRoot + "/domains/example.org/mail_users/17"]);
+  assert.equal(resultData(await call("inboxeu_get_mailbox")).data.user, "sales");
+  assert.deepEqual((await requests()).map(req => req.url), [
+    apiRoot + "/domains/", apiRoot + "/domains/team.example/mail_users/?limit=2&offset=0",
+    apiRoot + "/domains/team.example/mail_users/46",
+  ]);
+});
+
+test("modern forms accept a full mailbox address and keep the configured domain on retry", async t => {
+  const rows = [{ id: 45, user: "info" }, { id: 46, user: "sales" }];
+  const page = { body: { data: { data: rows, count: 2, active_count: 2 } } };
+  const replies = ["sales@team.example", "sales@other.example"];
+  const { call, requests } = await connectFixture(t, [page, page, { body: { data: rows[1] } }, page], {
+    mode: { pin: "2026-07-28" },
+    defaults: { INBOXEU_DOMAIN_NAME: "team.example" },
+    onElicit: form => {
+      assertTargetForm(form, "userId");
+      assert.match(form.message, /sales@team\.example/);
+      return { action: "accept", content: { userId: replies.shift() } };
+    },
+  });
+  const account = resultData(await call("inboxeu_get_mailbox"));
+  assert.equal(account.data.email, "sales@team.example");
+  assert.equal(account.data.id, 46);
+  const wrongDomain = await call("inboxeu_get_mailbox");
+  assert.equal(wrongDomain.isError, true);
+  assert.match(wrongDomain.content[0].text, /address and domain must match/i);
+  assert.deepEqual(replies, []);
+  const directory = apiRoot + "/domains/team.example/mail_users/";
+  assert.deepEqual((await requests()).map(req => req.url), [
+    directory + "?limit=2&offset=0", directory + "?limit=100&offset=0", directory + "46",
+    directory + "?limit=2&offset=0",
+  ]);
+});
+
+test("a completed directory miss and a denied lookup both stop before fetching mailbox details", async t => {
+  const { call, requests } = await connectFixture(t, [
+    { body: { data: { data: [{ id: "001", user: "sales" }], count: 1, active_count: 1 } } },
+    { status: 403, body: { error: "Access denied" } },
+  ], { defaults: { INBOXEU_DOMAIN_NAME: "example.org", INBOXEU_USER_ID: "001" } });
+  const args = { mailboxEmail: "absent@example.org" };
+  const missing = await call("inboxeu_get_mailbox", args);
+  assert.equal(missing.isError, true);
+  assert.equal(missing.content[0].text, "The address was not found in the mailbox directory for this domain.");
+  const denied = await call("inboxeu_get_mailbox", args);
+  assert.equal(denied.isError, true);
+  assert.match(denied.content[0].text, /permission|access|API key/i);
+  assert.doesNotMatch(denied.content[0].text, /address was not found|\b403\b/i);
+  const directory = apiRoot + "/domains/example.org/mail_users/?limit=100&offset=0";
+  assert.deepEqual((await requests()).map(req => req.url), [directory, directory]);
 });
 
 test("mailbox reads resolve within the selected domain and report ambiguous choices locally", async t => {
