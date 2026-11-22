@@ -56,6 +56,38 @@ The contract tests use version 1.0.0 of the Inbox.eu API specification, saved on
 
    A quiet terminal is expected. The server waits for MCP messages on standard input and writes protocol responses to standard output. Press **Ctrl+C** to stop the manual run.
 
+## Install the plugin in ChatGPT Desktop
+
+This setup is for local chats in the desktop app’s **Work** mode. After installing the dependencies and configuring `.env` as described above, run this command from the folder containing `package.json`.
+
+```sh
+npm run plugin:desktop
+```
+
+In Windows PowerShell, you can use `npm.cmd run plugin:desktop`.
+
+1. Restart ChatGPT Desktop and open the project folder in **Work** mode.
+2. Open **Plugins**, choose **Inbox.eu Local** from the marketplace selector, and install **Inbox.eu Business**. [OpenAI’s local marketplace guide](https://developers.openai.com/plugins/build/plugins#install-a-local-plugin-manually)
+3. In a new local **Work** chat in the project, type `@Inbox.eu` and select **Inbox.eu Business** under **Plugins**. Ask “Call `inboxeu_check_auth` with `{}`.” A valid key returns `{"authenticated":true}`. To check the installation before adding a key, ask for the list of Inbox.eu tools. The default `read-only` mode exposes nine. [Selecting a plugin in Work](https://learn.chatgpt.com/docs/build-plugins#using-a-plugin)
+
+The plugin runs `node` from your system PATH and launches the existing `src/index.js`. The server reads the original `.env` beside `package.json`. Tool results returned to ChatGPT can include mailbox data. If you move the project, rerun the preparation command from its new folder and reinstall the plugin. If ChatGPT cannot find Node.js, add it to your PATH and restart the desktop app.
+
+### Update an existing desktop installation
+
+Run these commands in the directory you cloned from GitHub.
+
+```sh
+git pull --ff-only
+npm ci --ignore-scripts
+npm run plugin:desktop
+```
+
+If you installed from a ZIP, extract the new version, place your existing `.env` beside its `package.json`, and run the two npm commands above in that folder.
+
+Fully quit ChatGPT Desktop, reopen the updated project in **Work**, and reinstall **Inbox.eu Business** from **Inbox.eu Local**. This replaces the older server process, which could keep using an empty key even in a new chat. The preparation command writes the machine-specific `plugins/inboxeu-business/mcp.json`. Your key stays in the project's `.env`.
+
+Select the plugin with `@` and call `inboxeu_check_auth` with `{}`. Expect `{"authenticated":true}`. If the tool reports `Set INBOXEU_API_KEY to a key with no spaces or line breaks.`, check the `INBOXEU_API_KEY` entry in that project's `.env`. With the updated server, saving, replacing, or clearing just the key takes effect on the next call in the same chat. Changes to the access mode or tool defaults require a server restart.
+
 ## Connect an MCP client and check access
 
 In a client that supports local MCP servers, add a server named `inboxeu`, choose the `stdio` transport, set the command to `node`, and pass the **absolute path to `src/index.js`** as the first argument. The client starts its own server process. If the client uses an `mcpServers` JSON configuration, use this example and replace the path with your actual installation path.
@@ -76,6 +108,8 @@ On Windows, a path such as `C:/Projects/Inbox.EU-MCP-Business-Premium/src/index.
 Restart the connection and open the client's tool list (`tools/list`). In `read-only` mode you should see nine tools, even before adding a key. To verify the key itself, call `inboxeu_check_auth` with `{}`. A valid key returns `{"authenticated":true}`.
 
 All `INBOXEU_*` settings come from one file. The default is `.env` beside `package.json`, regardless of the client's working directory. To keep it elsewhere, pass the absolute path with `--env-file`.
+
+If the key is missing or has changed, save the new `INBOXEU_API_KEY` in that file and call `inboxeu_check_auth` again in the same chat. The server reads the key for each API request. Restart the MCP server after changing other settings, including the access mode, domain or mailbox defaults.
 
 ## Choose an access mode
 
@@ -115,7 +149,7 @@ INBOXEU_UPDATE_PROFILE_PREFS='{"itemsPerPage":50}'
 INBOXEU_CREATE_MAILBOXES_BODY='[{"user":"office"}]'
 ```
 
-A tool argument overrides the entire corresponding field, including a whole object or array. For example, calling `inboxeu_list_invoices` with `{"limit":5}` overrides the limit and keeps the domain from `.env`. The server skips empty settings in `.env`. Restart the MCP server for file changes to take effect.
+A tool argument overrides the entire corresponding field, including a whole object or array. For example, calling `inboxeu_list_invoices` with `{"limit":5}` overrides the limit and keeps the domain from `.env`. The server skips empty settings in `.env`. Restart the MCP server after editing these argument defaults.
 
 The server prompts only for a required domain (`domainName`, `hostName`, or `hostname`) or mailbox ID (`userId`) that you omitted from the call and that it cannot determine unambiguously from `.env`. If it needs both, it asks for the domain first. It then asks for the ID only if the mailbox still needs to be selected. Supply other required arguments in the call or set them in `.env`.
 
@@ -166,7 +200,7 @@ Inbox.eu publishes only the object type for both schemas. To get the field names
 
 ## Tools
 
-All nine read operations described in the OpenAPI specification are available by default.
+All nine read operations are available by default. `inboxeu_get_mailbox` returns administrative details for one mailbox. Listing the folders or messages inside it is outside the scope of the published Inbox.eu Business API. [Inbox.eu OpenAPI specification](./inboxeu-openapi.json)
 
 | Tool | Arguments | Result |
 | --- | --- | --- |
@@ -204,7 +238,7 @@ Use `tools/list` to inspect argument types and allowed values. Inbox.eu defines 
 
 ### Which emails can I send?
 
-The published Inbox.eu HTTPS API v1 supports two kinds of email. You can invite an administrator or send account details for a newly created or updated mailbox. The API has no endpoint for sending ordinary email with a recipient, subject, and body of your choice. [Inbox.eu API documentation](https://api.inbox.eu/api/v1/doc/)
+You can ask Inbox.eu to email an administrator invitation or send account details for a newly created or updated mailbox. Inbox.eu also emails a generated password when you create an administrator and omit `password`. Sending ordinary messages with your own recipient, subject, and body requires a separate mail integration. [Inbox.eu API documentation](https://api.inbox.eu/api/v1/doc/)
 
 ## Responses and troubleshooting
 

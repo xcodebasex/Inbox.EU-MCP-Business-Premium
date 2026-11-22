@@ -8,6 +8,7 @@
     "node": ">=22"
   },
   "scripts": {
+    "plugin:desktop": "node scripts/prepare-desktop-plugin.mjs",
     "start": "node src/index.js",
     "test": "node --test"
   },

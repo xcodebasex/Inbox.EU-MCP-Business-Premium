@@ -76,6 +76,7 @@ async function connectFixture(t, replies, {
   await client.connect(transport);
   return {
     client,
+    envFile,
     call: (name, args = {}) => client.callTool({ name, arguments: args }),
     requests: async () => {
       const raw = (await readFile(log, "utf8")).trimEnd();
@@ -230,13 +231,27 @@ test("the default stdio catalog exposes read operations and rejects invalid call
   assert.deepEqual(await requests(), []);
 });
 
-test("a client can discover tools before setting a key and gets an actionable local error on use", async t => {
-  const { client, call, requests } = await connectFixture(t, [], { apiKey: null });
+test("a connected client can discover tools and picks up a saved, rotated or removed API key", async t => {
+  const authenticated = { body: { data: { authenticated: true } } };
+  const { client, call, requests, envFile } = await connectFixture(t, [authenticated, authenticated], { apiKey: null });
   assert.equal((await client.listTools()).tools.length, readTools.length);
-  const result = await call("inboxeu_check_auth");
-  assert.equal(result.isError, true);
-  assert.match(result.content[0].text, /INBOXEU_API_KEY/);
+  const checkMissingKey = async () => {
+    const result = await call("inboxeu_check_auth");
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /INBOXEU_API_KEY/);
+  };
+  await checkMissingKey();
   assert.deepEqual(await requests(), []);
+  const keys = [fixtureKey, "rotated-stdio-test-key"];
+  for (const key of keys) {
+    await writeFile(envFile, "INBOXEU_API_KEY=" + key + "\n");
+    assert.deepEqual(resultData(await call("inboxeu_check_auth")), { authenticated: true });
+  }
+  await writeFile(envFile, "");
+  await checkMissingKey();
+  assert.deepEqual(await requests(), keys.map(key => ({
+    method: "GET", url: apiRoot + "/security/check", authorization: "Bearer " + key, body: null,
+  })));
 });
 
 test("read tools accept configured arguments, list mailbox targets as optional and reject invalid overrides", async t => {

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "inboxeu-business",
+  "version": "1.0.1",
+  "description": "Administer Inbox.eu Business Premium domains and mailboxes through the local MCP server.",
+  "author": { "name": "xcodebasex" },
+  "repository": "https://github.com/xcodebasex/Inbox.EU-MCP-Business-Premium",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Inbox.eu Business",
+        "shortDescription": "Domain and mailbox admin",
+        "longDescription": "Check access, look up mailboxes and administrators, and list invoices with 9 tools in read-only mode. Full mode exposes all 23 tools, including mailbox creation, updates, deletion, and administrator invitations.",
+        "developerName": "xcodebasex",
+        "category": "Business & Operations",
+        "logo": "./assets/envelope.svg",
+        "composerIcon": "./assets/envelope.svg",
+        "defaultPrompt": [
+          "Call inboxeu_check_auth to verify my Inbox.eu Business connection.",
+          "List the invoices for my Inbox.eu Business domain."
+        ]
+      }
+    }
+  }
+}

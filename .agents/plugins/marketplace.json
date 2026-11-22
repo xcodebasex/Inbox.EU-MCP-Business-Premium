@@ -1,0 +1,12 @@
+{
+  "name": "inboxeu-local",
+  "interface": { "displayName": "Inbox.eu Local" },
+  "plugins": [
+    {
+      "name": "inboxeu-business",
+      "source": { "source": "local", "path": "./plugins/inboxeu-business" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Business & Operations"
+    }
+  ]
+}

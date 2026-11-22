@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
-import { parseArgs, parseEnv } from "node:util";
+import { resolve } from "node:path";
+import { isDeepStrictEqual, parseArgs, parseEnv } from "node:util";
 import { dnsName, operations, validateIdentifier } from "./operations.js";
+
+export class ConfigError extends Error {}
 
 export function argumentEnvName(operation, field) {
   const type = operation.inputSchema.properties[field].type;
@@ -24,7 +27,7 @@ function parseArgument(value, type, variable) {
   } catch {
     // JSON parser errors can contain part of a password or request body.
   }
-  throw new Error(`Invalid ${variable}. Expected a JSON value of type ${type}.`);
+  throw new ConfigError(`Invalid ${variable}. Expected a JSON value of type ${type}.`);
 }
 
 function parseDomains(value) {
@@ -44,7 +47,7 @@ function parseDomains(value) {
       domains.set(domain, mailboxIds);
     }
   } catch {
-    throw new Error("Invalid INBOXEU_DOMAINS. Expected unique domain names in a JSON array or an object mapping domains to arrays of unique mailbox ID strings.");
+    throw new ConfigError("Invalid INBOXEU_DOMAINS. Expected unique domain names in a JSON array or an object mapping domains to arrays of unique mailbox ID strings.");
   }
   return domains;
 }
@@ -64,32 +67,11 @@ function loadToolDefaults(settings, mode) {
   return defaults;
 }
 
-export function loadConfig(argv = process.argv.slice(2)) {
-  let options;
-  try {
-    options = parseArgs({
-      args: argv,
-      options: { mode: { type: "string" }, "env-file": { type: "string" } },
-    }).values;
-  } catch {
-    throw new Error("Invalid startup options. Use --mode read-only|full or --env-file <path>.");
-  }
-
-  const customFile = options["env-file"];
-  const file = customFile ?? new URL("../.env", import.meta.url);
-  let settings = {};
-  try {
-    settings = parseEnv(readFileSync(file, "utf8").replace(/^\uFEFF/, ""));
-  } catch (error) {
-    if (customFile !== undefined || error.code !== "ENOENT") {
-      throw new Error("Could not read the .env file. Check its path, permissions, and format.");
-    }
-  }
-
-  const selectedMode = options.mode ?? settings.INBOXEU_MODE;
+function serverSettings(settings, cliMode) {
+  const selectedMode = cliMode ?? settings.INBOXEU_MODE;
   const mode = selectedMode ?? "read-only";
   if (mode !== "read-only" && mode !== "full") {
-    throw new Error("Unknown mode. Set INBOXEU_MODE or --mode to read-only or full.");
+    throw new ConfigError("Unknown mode. Set INBOXEU_MODE or --mode to read-only or full.");
   }
   const domains = parseDomains(settings.INBOXEU_DOMAINS);
   if (settings.INBOXEU_DOMAIN_NAME) {
@@ -99,13 +81,48 @@ export function loadConfig(argv = process.argv.slice(2)) {
   }
   const ids = domains.get(settings.INBOXEU_DOMAIN_NAME);
   if (settings.INBOXEU_USER_ID && ids?.length && !ids.includes(settings.INBOXEU_USER_ID)) {
-    throw new Error("Invalid INBOXEU_USER_ID. Choose a configured mailbox ID for the default domain.");
+    throw new ConfigError("Invalid INBOXEU_USER_ID. Choose a configured mailbox ID for the default domain.");
   }
   return {
     mode,
-    apiKey: settings.INBOXEU_API_KEY,
     domains,
     toolDefaults: loadToolDefaults(settings, mode),
     legacyWrites: selectedMode === undefined && settings.INBOXEU_ENABLE_WRITES === "true",
+  };
+}
+
+export function loadConfig(argv = process.argv.slice(2)) {
+  let options;
+  try {
+    options = parseArgs({
+      args: argv,
+      options: { mode: { type: "string" }, "env-file": { type: "string" } },
+    }).values;
+  } catch {
+    throw new ConfigError("Invalid startup options. Use --mode read-only|full or --env-file <path>.");
+  }
+
+  const customFile = options["env-file"];
+  const file = customFile === undefined ? new URL("../.env", import.meta.url) : resolve(customFile);
+  function readSettings() {
+    try {
+      return parseEnv(readFileSync(file, "utf8").replace(/^\uFEFF/, ""));
+    } catch (error) {
+      if (customFile === undefined && error.code === "ENOENT") return {};
+      throw new ConfigError("Could not read the .env file. Check its path, permissions, and format.");
+    }
+  }
+
+  const config = serverSettings(readSettings(), options.mode);
+  return {
+    ...config,
+    readApiKey() {
+      const current = readSettings();
+      // A new credential must never be paired with stale permissions or target defaults.
+      if (!isDeepStrictEqual(serverSettings(current, options.mode), config)) {
+        throw new ConfigError("Inbox.eu settings changed. Restart the MCP server to load the new configuration.");
+      }
+      return current.INBOXEU_API_KEY;
+    },
   };
 }

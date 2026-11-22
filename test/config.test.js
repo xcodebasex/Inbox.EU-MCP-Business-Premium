@@ -58,13 +58,13 @@ test("the default .env follows the installed server, even when its client starts
     INBOXEU_UPDATE_MAILBOX_BODY: "invalid",
     INBOXEU_IMPERSONATION_TOKEN: "environment-token",
   });
-  assert.deepEqual(loadIsolatedConfig([]), {
-    apiKey: undefined, mode: "read-only", legacyWrites: false, domains: new Map(), toolDefaults: {},
+  const { readApiKey, ...catalog } = loadIsolatedConfig([]);
+  assert.deepEqual(catalog, {
+    mode: "read-only", legacyWrites: false, domains: new Map(), toolDefaults: {},
   });
+  assert.equal(readApiKey(), undefined);
   await writeFile(file, '\uFEFF# Test settings\r\nINBOXEU_API_KEY="fixture#123"\r\nINBOXEU_MODE=read-only\r\n');
-  assert.deepEqual(loadIsolatedConfig([]), {
-    apiKey: "fixture#123", mode: "read-only", legacyWrites: false, domains: new Map(), toolDefaults: {},
-  });
+  assert.equal(readApiKey(), "fixture#123");
   const full = loadIsolatedConfig(["--mode", "full"]);
   assert.equal(full.mode, "full");
   assert.deepEqual(full.toolDefaults, {});
@@ -79,6 +79,23 @@ test("the default .env follows the installed server, even when its client starts
 test("an explicit missing configuration file stops startup", () => {
   const missing = path.join(tmpdir(), "inboxeu-missing-" + randomUUID(), ".env");
   assert.throws(() => loadConfig(["--env-file", missing]), /read the .env file/);
+});
+
+test("live credential reads reject changed permissions and target defaults until restart", async t => {
+  const file = await makeEnvFile(t);
+  const base = "INBOXEU_MODE=full\nINBOXEU_DOMAINS='[\"one.example\"]'\nINBOXEU_USER_ID=001\n";
+  await writeFile(file, base + "INBOXEU_API_KEY=first-fixture-key\n");
+  const { readApiKey } = loadConfig(["--env-file", file]);
+  for (const changed of [
+    base.replace("full", "read-only"), base.replace("one.example", "two.example"), base.replace("001", "002"),
+  ]) {
+    await writeFile(file, changed + "INBOXEU_API_KEY=second-fixture-key\n");
+    assert.throws(readApiKey, { message: "Inbox.eu settings changed. Restart the MCP server to load the new configuration." });
+  }
+  await rm(file);
+  assert.throws(readApiKey, /read the .env file/);
+  await writeFile(file, base + "INBOXEU_API_KEY=second-fixture-key\n");
+  assert.equal(readApiKey(), "second-fixture-key");
 });
 
 test("the template lists every configurable argument without setting any target or payload", async () => {

@@ -1,7 +1,7 @@
 import { McpServer, fromJsonSchema } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { createClient, InboxEuError } from "./client.js";
-import { loadConfig } from "./config.js";
+import { ConfigError, loadConfig } from "./config.js";
 import { InputError, operations } from "./operations.js";
 import { projectResult } from "./results.js";
 import { toolArguments } from "./targets.js";
@@ -45,9 +45,8 @@ function toolInputSchema(schema, defaults, optional) {
   };
 }
 
-function createServer({ mode, apiKey, toolDefaults, domains }, clarification) {
+function createServer({ mode, readApiKey, toolDefaults, domains }, clarification) {
   const server = new McpServer({ name: "inboxeu-mcp", version: "1.0.0" }, clarification.serverOptions);
-  let request;
   for (const operation of operations) {
     const readOnly = operation.method === "GET";
     if (!readOnly && mode !== "full") continue;
@@ -64,9 +63,11 @@ function createServer({ mode, apiKey, toolDefaults, domains }, clarification) {
         openWorldHint: true,
       },
     }, async (args, ctx) => {
+      let apiKey;
       let params;
       let resolvedArgs;
       try {
+        apiKey = readApiKey();
         const answers = clarification.priorAnswers(ctx, operation.name, args);
         const { values, missing } = resolve({ ...answers, ...args });
         if (missing) {
@@ -77,11 +78,10 @@ function createServer({ mode, apiKey, toolDefaults, domains }, clarification) {
         resolvedArgs = checked.value;
         params = operation.build(resolvedArgs);
       } catch (error) {
-        return toolError(error instanceof InputError ? error.message : invalidParameters);
+        return toolError(error instanceof InputError || error instanceof ConfigError ? error.message : invalidParameters);
       }
       try {
-        // Tool discovery works before an account is connected.
-        request ??= createClient({ apiKey });
+        const request = createClient({ apiKey });
         const response = await request({ ...params, method: operation.method, signal: ctx.mcpReq.signal });
         const requestedCount = operation.name === "inboxeu_create_mailboxes" ? params.body.length : undefined;
         const result = projectResult(operation.name, response, { requestedCount, userId: resolvedArgs.userId });
